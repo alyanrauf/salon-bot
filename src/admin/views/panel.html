@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salon Bot Admin</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #8b4a6b;
+      --primary-dark: #7a3f5e;
+      --bg: #f8f4f0;
+      --card: #fff;
+      --border: #e8e0f0;
+      --text: #333;
+      --muted: #888;
+      --success: #27ae60;
+      --danger: #e74c3c;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--text); padding: 20px;
+      min-height: 100vh;
+    }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 28px; flex-wrap: wrap; gap: 12px;
+    }
+    header h1 { color: var(--primary); font-size: 1.5rem; }
+    .logout { color: var(--muted); font-size: 0.85rem; text-decoration: none;
+              padding: 6px 14px; border: 1px solid var(--border);
+              border-radius: 6px; transition: all 0.2s; }
+    .logout:hover { color: var(--danger); border-color: var(--danger); }
+
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+    .tab {
+      padding: 10px 22px; border-radius: 8px; cursor: pointer;
+      border: 2px solid var(--border); background: var(--card);
+      font-size: 0.95rem; font-weight: 500; transition: all 0.2s;
+      color: var(--muted);
+    }
+    .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .card {
+      background: var(--card); border-radius: 12px;
+      padding: 24px; margin-bottom: 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .card h2 { font-size: 1.1rem; margin-bottom: 18px; color: var(--primary); }
+
+    .item-row {
+      display: grid; grid-template-columns: 1fr 1fr auto auto;
+      gap: 10px; align-items: center; padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .item-row:last-child { border-bottom: none; }
+    .item-row input, .item-row select, .item-row textarea {
+      padding: 8px 12px; border: 1.5px solid var(--border);
+      border-radius: 6px; font-size: 0.9rem; width: 100%;
+      font-family: inherit; outline: none; transition: border-color 0.2s;
+    }
+    .item-row textarea { resize: vertical; min-height: 60px; }
+    .item-row input:focus, .item-row select:focus, .item-row textarea:focus {
+      border-color: var(--primary);
+    }
+    .deals-row { grid-template-columns: 1fr 2fr auto auto; }
+
+    button { cursor: pointer; border: none; border-radius: 6px;
+             font-family: inherit; font-weight: 600; transition: all 0.2s; }
+    .btn-save {
+      padding: 10px 22px; background: var(--primary); color: #fff;
+      font-size: 0.9rem;
+    }
+    .btn-save:hover { background: var(--primary-dark); }
+    .btn-del {
+      padding: 8px 14px; background: #fdf0f0; color: var(--danger);
+      font-size: 0.85rem; border: 1px solid #f5c6c6;
+    }
+    .btn-del:hover { background: var(--danger); color: #fff; }
+    .btn-add {
+      padding: 10px 20px; background: #f0f8f4; color: var(--success);
+      border: 2px dashed #a8d5b8; font-size: 0.9rem; width: 100%;
+      margin-top: 14px; border-radius: 8px;
+    }
+    .btn-add:hover { background: var(--success); color: #fff; border-color: var(--success); }
+    .btn-primary {
+      padding: 12px 28px; background: var(--primary); color: #fff;
+      font-size: 1rem; display: block; margin: 20px auto 0;
+    }
+    .btn-primary:hover { background: var(--primary-dark); }
+
+    .toggle-wrap { display: flex; align-items: center; gap: 8px; }
+    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #ccc; border-radius: 24px; transition: 0.3s;
+    }
+    .slider:before {
+      content: ''; position: absolute; width: 18px; height: 18px;
+      left: 3px; bottom: 3px; background: #fff; border-radius: 50%;
+      transition: 0.3s;
+    }
+    input:checked + .slider { background: var(--success); }
+    input:checked + .slider:before { transform: translateX(20px); }
+    .toggle-label { font-size: 0.8rem; color: var(--muted); }
+
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #333; color: #fff; padding: 12px 24px;
+      border-radius: 8px; font-size: 0.9rem; opacity: 0;
+      transition: opacity 0.3s; pointer-events: none; z-index: 999;
+    }
+    .toast.show { opacity: 1; }
+    .toast.success { background: var(--success); }
+    .toast.error { background: var(--danger); }
+
+    @media (max-width: 600px) {
+      .item-row { grid-template-columns: 1fr 1fr; }
+      .item-row .btn-del { grid-column: span 2; }
+      .deals-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>💅 Salon Bot Admin</h1>
+    <a href="/admin/logout" class="logout">Logout</a>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('deals', this)">🎁 Deals</button>
+    <button class="tab" onclick="switchTab('services', this)">💰 Services</button>
+  </div>
+
+  <!-- DEALS TAB -->
+  <div id="tab-deals" class="tab-content active">
+    <div class="card">
+      <h2>Active Deals & Offers</h2>
+      <div id="deals-list"></div>
+      <button class="btn-add" onclick="addDealRow()">+ Add New Deal</button>
+    </div>
+    <button class="btn-primary btn-save" onclick="saveDeals()">Save Deals</button>
+  </div>
+
+  <!-- SERVICES TAB -->
+  <div id="tab-services" class="tab-content">
+    <div class="card">
+      <h2>Services & Prices</h2>
+      <div id="services-list"></div>
+      <button class="btn-add" onclick="addServiceRow()">+ Add New Service</button>
+    </div>
+    <button class="btn-primary btn-save" onclick="saveServices()">Save Services</button>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let dealsData = [];
+    let servicesData = [];
+
+    // Load data on page load
+    async function init() {
+      try {
+        const [d, s] = await Promise.all([
+          fetch('/admin/api/deals').then(r => r.json()),
+          fetch('/admin/api/services').then(r => r.json()),
+        ]);
+        dealsData = d;
+        servicesData = s;
+        renderDeals();
+        renderServices();
+      } catch (e) {
+        showToast('Failed to load data', 'error');
+      }
+    }
+
+    function renderDeals() {
+      const list = document.getElementById('deals-list');
+      list.innerHTML = '';
+      dealsData.forEach((deal, i) => {
+        list.insertAdjacentHTML('beforeend', `
+          <div class="item-row deals-row" id="deal-row-${i}">
+            <input type="text" placeholder="Deal title" value="${esc(deal.title)}" data-field="title" data-index="${i}">
+            <textarea placeholder="Description" data-field="description" data-index="${i}">${esc(deal.description)}</textarea>
+            <div class="toggle-wrap">
+              <label class="toggle">
+                <input type="checkbox" ${deal.active ? 'checked' : ''} data-field="active" data-index="${i}" onchange="updateDeal(${i}, 'active', this.checked)">
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label">${deal.active ? 'Active' : 'Hidden'}</span>
+            </div>
+            <button class="btn-del" onclick="removeDeal(${i})">Delete</button>
+          </div>
+        `);
+      });
+      // Bind input events
+      list.querySelectorAll('input[type=text], textarea').forEach(el => {
+        el.addEventListener('input', () => {
+          const i = +el.dataset.index;
+          dealsData[i][el.dataset.field] = el.value;
+        });
+      });
+    }
+
+    function renderServices() {
+      const list = document.getElementById('services-list');
+      list.innerHTML = '';
+      servicesData.forEach((svc, i) => {
+        list.insertAdjacentHTML('beforeend', `
+          <div class="item-row" id="svc-row-${i}">
+            <input type="text" placeholder="Service name" value="${esc(svc.name)}" data-field="name" data-index="${i}">
+            <input type="text" placeholder="Price (e.g. AED 100)" value="${esc(svc.price)}" data-field="price" data-index="${i}">
+            <select data-field="branch" data-index="${i}">
+              <option value="All Branches" ${svc.branch === 'All Branches' ? 'selected' : ''}>All Branches</option>
+              <option value="Branch 1" ${svc.branch === 'Branch 1' ? 'selected' : ''}>Branch 1</option>
+              <option value="Branch 2" ${svc.branch === 'Branch 2' ? 'selected' : ''}>Branch 2</option>
+            </select>
+            <button class="btn-del" onclick="removeService(${i})">Delete</button>
+          </div>
+        `);
+      });
+      list.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('change', () => {
+          const i = +el.dataset.index;
+          servicesData[i][el.dataset.field] = el.value;
+        });
+        el.addEventListener('input', () => {
+          const i = +el.dataset.index;
+          servicesData[i][el.dataset.field] = el.value;
+        });
+      });
+    }
+
+    function updateDeal(i, field, value) {
+      dealsData[i][field] = value ? 1 : 0;
+      // Update label
+      const row = document.getElementById(`deal-row-${i}`);
+      const label = row.querySelector('.toggle-label');
+      if (label) label.textContent = value ? 'Active' : 'Hidden';
+    }
+
+    function addDealRow() {
+      dealsData.push({ id: null, title: '', description: '', active: 1 });
+      renderDeals();
+    }
+
+    function removeDeal(i) {
+      dealsData.splice(i, 1);
+      renderDeals();
+    }
+
+    function addServiceRow() {
+      servicesData.push({ id: null, name: '', price: '', branch: 'All Branches' });
+      renderServices();
+    }
+
+    function removeService(i) {
+      servicesData.splice(i, 1);
+      renderServices();
+    }
+
+    async function saveDeals() {
+      try {
+        const res = await fetch('/admin/deals', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deals: dealsData }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('Deals saved!', 'success');
+          dealsData = data.deals;
+          renderDeals();
+        } else {
+          showToast(data.error || 'Save failed', 'error');
+        }
+      } catch (e) {
+        showToast('Network error', 'error');
+      }
+    }
+
+    async function saveServices() {
+      try {
+        const res = await fetch('/admin/services', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ services: servicesData }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('Services saved!', 'success');
+          servicesData = data.services;
+          renderServices();
+        } else {
+          showToast(data.error || 'Save failed', 'error');
+        }
+      } catch (e) {
+        showToast('Network error', 'error');
+      }
+    }
+
+    function switchTab(name, el) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById(`tab-${name}`).classList.add('active');
+    }
+
+    function showToast(msg, type = '') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = `toast show ${type}`;
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    function esc(str) {
+      return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    init();
+  </script>
+</body>
+</html>
