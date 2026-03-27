@@ -28,10 +28,6 @@ function getBranchesReply() {
   return reply;
 }
 
-function getBranchCalendlyLink(branchNumber) {
-  if (branchNumber === 1) return process.env.CALENDLY_BRANCH1 || null;
-  if (branchNumber === 2) return process.env.CALENDLY_BRANCH2 || null;
-  return null;
-}
 
-module.exports = { getBranchesReply, getBranchCalendlyLink, BRANCHES };
+
+module.exports = { getBranchesReply, BRANCHES };

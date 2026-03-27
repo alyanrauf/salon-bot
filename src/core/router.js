@@ -7,44 +7,34 @@ const { handleBookingStep } = require('../replies/booking');
 
 const FALLBACK_MESSAGE =
   "Hi! I'm here to help. You can ask me about:\n\n" +
-  '💰 *Services & Prices* — type "prices" or "how much"\n' +
-  '✨ *Service Details* — type "what is" or "tell me about"\n' +
+  '💰 *Prices* — type "prices" or "how much"\n' +
+  '✨ *Service Details* — type "tell me about" or "what is"\n' +
   '🎁 *Deals* — type "offers" or "deals"\n' +
   '📍 *Location* — type "where" or "branches"\n' +
   '📅 *Booking* — type "book" or "appointment"\n\n' +
   'Our team is always happy to help!';
 
 async function routeMessage(userId, messageText, platform) {
-  // Check if user is in a booking flow
+  // Check if user is mid-booking flow
   const session = getSession(userId);
-  if (session && session.state === 'AWAITING_BRANCH') {
-    return handleBookingStep(userId, messageText, session);
+  if (session && session.state && session.state.startsWith('ASK_')) {
+    return handleBookingStep(userId, messageText, session, platform);
   }
 
-  const intent = await detectIntent(messageText);
+  const result = await detectIntent(messageText);
+
+  // result is either a plain string or { intent, term }
+  const intent = typeof result === 'object' ? result.intent : result;
+  const term = typeof result === 'object' ? result.term : null;
 
   switch (intent) {
-    case 'PRICE':
-      return getPricesReply();
-
-    case 'DEALS':
-      return getDealsReply();
-
-    case 'SERVICE_LIST':
-      return getServiceListReply();
-
-    case 'SERVICE_DETAIL':
-      return getServiceDetail(intent.term);
-
-    case 'BRANCH':
-      return getBranchesReply();
-
-    case 'BOOKING':
-      return handleBookingStep(userId, messageText, null);
-
-    case 'UNKNOWN':
-    default:
-      return FALLBACK_MESSAGE;
+    case 'PRICE': return getPricesReply();
+    case 'SERVICE_LIST': return getServiceListReply();
+    case 'SERVICE_DETAIL': return getServiceDetail(term);
+    case 'DEALS': return getDealsReply();
+    case 'BRANCH': return getBranchesReply();
+    case 'BOOKING': return handleBookingStep(userId, messageText, null, platform);
+    default: return FALLBACK_MESSAGE;
   }
 }
 

@@ -1,45 +1,215 @@
 const { getSession, setSession, clearSession } = require('../core/session');
-const { getBranchCalendlyLink, BRANCHES } = require('./branches');
+const { getDb } = require('../db/database');
+const { BRANCHES } = require('./branches');
 
-const ASK_BRANCH_MESSAGE =
-  '📅 *Book an Appointment*\n\n' +
-  'Which branch would you like to visit?\n\n' +
-  BRANCHES.map((b) => `Reply *${b.number}* for ${b.name}`).join('\n');
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function handleBookingStep(userId, messageText, session) {
+function getServiceNames() {
+  try {
+    const db = getDb();
+    return db.prepare('SELECT name FROM services ORDER BY name').all().map(s => s.name);
+  } catch {
+    return [];
+  }
+}
+
+function saveBooking(data, platform) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(
+    data.name,
+    data.phone,
+    data.service,
+    data.branch,
+    data.date,
+    data.time,
+    platform || 'chat'
+  );
+}
+
+function branchList() {
+  return BRANCHES.map(b => `  *${b.number}* — ${b.name}`).join('\n');
+}
+
+// Validates name: at least 2 words, only letters/spaces
+function isValidName(text) {
+  return /^[a-zA-Z\s]{2,50}$/.test(text.trim()) && text.trim().split(/\s+/).length >= 2;
+}
+
+// Validates phone: 7–15 digits, optional leading +
+function isValidPhone(text) {
+  return /^\+?[0-9\s\-]{7,15}$/.test(text.trim());
+}
+
+// Validates date: accepts formats like "30 March", "April 5", "2026-04-05", "tomorrow"
+function isValidDate(text) {
+  const t = text.trim().toLowerCase();
+  if (t === 'tomorrow' || t === 'today') return true;
+  // "30 March", "March 30", "April 5 2026", "2026-04-05"
+  return /^(\d{1,2}\s+\w+|\w+\s+\d{1,2})(\s+\d{4})?$/.test(t) ||
+    /^\d{4}-\d{2}-\d{2}$/.test(t);
+}
+
+// Validates time: "2pm", "2:30 PM", "14:00", "11am"
+function isValidTime(text) {
+  return /^([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?$/i.test(text.trim()) ||
+    /^([01]?\d|2[0-3])\s?(am|pm)$/i.test(text.trim());
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────────
+
+function handleBookingStep(userId, messageText, session, platform) {
+  const text = messageText.trim();
+
+  // ── STEP 1: Start ──────────────────────────────────────────────────────────
   if (!session) {
-    // Start booking flow
-    setSession(userId, { state: 'AWAITING_BRANCH' });
-    return ASK_BRANCH_MESSAGE;
+    setSession(userId, { state: 'ASK_NAME', platform });
+    return (
+      '📅 *Book an Appointment*\n\n' +
+      "Let's get you booked in! 💅\n\n" +
+      'Please enter your *full name*:\n' +
+      '_e.g. Sara Ahmed_'
+    );
   }
 
-  if (session.state === 'AWAITING_BRANCH') {
-    const trimmed = messageText.trim();
-    const branchNum = parseInt(trimmed, 10);
-
-    if (branchNum === 1 || branchNum === 2) {
-      const link = getBranchCalendlyLink(branchNum);
-      const branch = BRANCHES.find((b) => b.number === branchNum);
-      clearSession(userId);
-
-      if (!link) {
-        return (
-          `Great choice! To book at *${branch.name}*, please contact us directly.\n\n` +
-          'Our team will confirm your appointment shortly.'
-        );
-      }
-
+  // ── STEP 2: Got name → ask phone ───────────────────────────────────────────
+  if (session.state === 'ASK_NAME') {
+    if (!isValidName(text)) {
       return (
-        `Great! Book your appointment at *${branch.name}* here:\n\n` +
-        `📅 ${link}\n\n` +
-        'After booking, our team will confirm your appointment. See you soon! 💅'
+        '⚠️ Please enter your *full name* (first and last name, letters only).\n\n' +
+        '_e.g. Sara Ahmed_'
+      );
+    }
+    setSession(userId, { ...session, state: 'ASK_PHONE', name: text });
+    return (
+      `Nice to meet you, *${text}*! 😊\n\n` +
+      'Please enter your *phone number*:\n' +
+      '_e.g. 03001234567 or +92 300 1234567_'
+    );
+  }
+
+  // ── STEP 3: Got phone → ask service ───────────────────────────────────────
+  if (session.state === 'ASK_PHONE') {
+    if (!isValidPhone(text)) {
+      return (
+        '⚠️ Please enter a valid *phone number*.\n\n' +
+        '_e.g. 03001234567 or +92 300 1234567_'
+      );
+    }
+    const services = getServiceNames();
+    setSession(userId, { ...session, state: 'ASK_SERVICE', phone: text, serviceList: services });
+
+    let reply = '📞 Got it!\n\nWhich *service* would you like to book?\n\n';
+    if (services.length) {
+      reply += services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n');
+      reply += '\n\n_Reply with the number or name of the service._';
+    } else {
+      reply += '_Type the name of the service you want._';
+    }
+    return reply;
+  }
+
+  // ── STEP 4: Got service → ask branch ──────────────────────────────────────
+  if (session.state === 'ASK_SERVICE') {
+    const services = session.serviceList || [];
+    let chosenService = null;
+
+    const num = parseInt(text, 10);
+    if (!isNaN(num) && num >= 1 && num <= services.length) {
+      chosenService = services[num - 1];
+    } else {
+      const lower = text.toLowerCase();
+      chosenService = services.find(s => s.toLowerCase().includes(lower));
+    }
+
+    if (!chosenService) {
+      return (
+        '⚠️ Please choose a valid service by *number* or *name*.\n\n' +
+        services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n')
       );
     }
 
-    // Invalid response — re-prompt
+    setSession(userId, { ...session, state: 'ASK_BRANCH', service: chosenService });
     return (
-      "Sorry, I didn't catch that. Please reply with:\n\n" +
-      BRANCHES.map((b) => `*${b.number}* for ${b.name}`).join('\n')
+      `✨ *${chosenService}* — great choice!\n\n` +
+      'Which *branch* would you like to visit?\n\n' +
+      branchList()
+    );
+  }
+
+  // ── STEP 5: Got branch → ask date ─────────────────────────────────────────
+  if (session.state === 'ASK_BRANCH') {
+    const branchNum = parseInt(text, 10);
+    const branch = BRANCHES.find(b => b.number === branchNum);
+    if (!branch) {
+      return (
+        '⚠️ Please reply with a valid branch *number*:\n\n' +
+        branchList()
+      );
+    }
+    setSession(userId, { ...session, state: 'ASK_DATE', branch: branch.name });
+    return (
+      `📍 *${branch.name}* — perfect!\n\n` +
+      'What *date* would you like to come in?\n\n' +
+      '_e.g. 30 March · April 5 · tomorrow_'
+    );
+  }
+
+  // ── STEP 6: Got date → ask time ───────────────────────────────────────────
+  if (session.state === 'ASK_DATE') {
+    if (!isValidDate(text)) {
+      return (
+        '⚠️ Please enter a valid *date*.\n\n' +
+        '_e.g. 30 March · April 5 · tomorrow · 2026-04-05_'
+      );
+    }
+    setSession(userId, { ...session, state: 'ASK_TIME', date: text });
+    return (
+      `📆 *${text}* — noted!\n\n` +
+      'What *time* works for you?\n\n' +
+      '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
+    );
+  }
+
+  // ── STEP 7: Got time → save & confirm ─────────────────────────────────────
+  if (session.state === 'ASK_TIME') {
+    if (!isValidTime(text)) {
+      return (
+        '⚠️ Please enter a valid *time*.\n\n' +
+        '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
+      );
+    }
+
+    const bookingData = {
+      name: session.name,
+      phone: session.phone,
+      service: session.service,
+      branch: session.branch,
+      date: session.date,
+      time: text,
+    };
+
+    try {
+      saveBooking(bookingData, session.platform);
+    } catch (err) {
+      clearSession(userId);
+      return 'Sorry, there was an error saving your booking. Please try again by typing *book*.';
+    }
+
+    clearSession(userId);
+
+    return (
+      '✅ *Booking Received!*\n\n' +
+      `👤 *Name:* ${bookingData.name}\n` +
+      `📞 *Phone:* ${bookingData.phone}\n` +
+      `✨ *Service:* ${bookingData.service}\n` +
+      `📍 *Branch:* ${bookingData.branch}\n` +
+      `📆 *Date:* ${bookingData.date}\n` +
+      `🕐 *Time:* ${bookingData.time}\n\n` +
+      '⏳ Our team will *confirm your appointment* shortly.\n' +
+      'See you soon! 💅'
     );
   }
 
