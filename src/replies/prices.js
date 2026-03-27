@@ -3,7 +3,7 @@ const { getDb } = require('../db/database');
 function getPricesReply() {
   try {
     const db = getDb();
-    const services = db.prepare('SELECT name, price, branch FROM services ORDER BY branch, name').all();
+    const services = db.prepare('SELECT name, price, description, branch FROM services ORDER BY branch, name').all();
 
     if (!services.length) {
       return "We're updating our price list. Please contact us directly for current prices!";
@@ -21,7 +21,7 @@ function getPricesReply() {
     for (const [branch, items] of Object.entries(branches)) {
       reply += `📍 *${branch}*\n`;
       for (const item of items) {
-        reply += `  • ${item.name} — ${item.price}\n`;
+        reply += `  • *${item.name}* — ${item.price}\n`;
       }
       reply += '\n';
     }
@@ -33,4 +33,27 @@ function getPricesReply() {
   }
 }
 
-module.exports = { getPricesReply };
+function getServiceDetail(name) {
+  try {
+    const db = getDb();
+    const service = db.prepare(
+      'SELECT * FROM services WHERE LOWER(name) LIKE ?'
+    ).get(`%${name.toLowerCase()}%`);
+
+    if (!service) return "Sorry, I couldn't find that service. Type *prices* to see all services.";
+
+    let reply = `✨ *${service.name}*\n`;
+    reply += `💰 *Price:* ${service.price}\n`;
+    reply += `📍 *Branch:* ${service.branch}\n`;
+    if (service.description) {
+      reply += `\n📋 *Includes:*\n${service.description.split('·').map(s => `  • ${s.trim()}`).join('\n')}`;
+    }
+    reply += `\n\nTo book, type *book*!`;
+    return reply;
+  } catch (err) {
+    console.error('[service-detail] DB error:', err.message);
+    return 'Sorry, could not load service details right now.';
+  }
+}
+
+module.exports = { getPricesReply, getServiceDetail };

@@ -1,6 +1,6 @@
 const { detectIntent } = require('./intent');
 const { getSession, setSession, clearSession } = require('./session');
-const { getPricesReply } = require('../replies/prices');
+const { getPricesReply, getServiceDetail } = require('../replies/prices');
 const { getDealsReply } = require('../replies/deals');
 const { getBranchesReply } = require('../replies/branches');
 const { handleBookingStep } = require('../replies/booking');
