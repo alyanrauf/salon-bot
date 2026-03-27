@@ -9,6 +9,7 @@ Classify the user's message as one of: PRICE, DEALS, BOOKING, BRANCH, SERVICE_DE
 - DEALS: asking about offers, promotions, discounts, specials
 - BOOKING: wants to book, schedule, make an appointment, reserve a slot
 - BRANCH: asking about location, address, directions, where the salon is
+- SERVICE_LIST: user wants to know what services are available, what do you offer, what treatments do you have, list of services (WITHOUT asking about prices or specific details)
 - SERVICE_DETAIL: asking about details, description, or what is included in a SPECIFIC named service or package (e.g. "tell me about bridal package 1", "what's included in hydrafacial deal", "details about keratin treatment")
 - UNKNOWN: anything else
 
@@ -40,7 +41,7 @@ async function detectIntent(message) {
       return term ? { intent: 'SERVICE_DETAIL', term } : 'UNKNOWN';
     }
 
-    const validIntents = ['PRICE', 'DEALS', 'BOOKING', 'BRANCH', 'UNKNOWN'];
+    const validIntents = ['PRICE', 'DEALS', 'BOOKING', 'BRANCH', 'SERVICE_LIST', 'UNKNOWN'];
     const intent = raw.toUpperCase();
     return validIntents.includes(intent) ? intent : 'UNKNOWN';
   } catch (err) {

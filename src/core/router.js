@@ -1,13 +1,14 @@
 const { detectIntent } = require('./intent');
 const { getSession, setSession, clearSession } = require('./session');
-const { getPricesReply, getServiceDetail } = require('../replies/prices');
+const { getPricesReply, getServiceDetail, getServiceListReply } = require('../replies/prices');
 const { getDealsReply } = require('../replies/deals');
 const { getBranchesReply } = require('../replies/branches');
 const { handleBookingStep } = require('../replies/booking');
 
 const FALLBACK_MESSAGE =
   "Hi! I'm here to help. You can ask me about:\n\n" +
-  '💰 *Prices* — type "prices" or "how much"\n' +
+  '💰 *Services & Prices* — type "prices" or "how much"\n' +
+  '✨ *Service Details* — type "what is" or "tell me about"\n' +
   '🎁 *Deals* — type "offers" or "deals"\n' +
   '📍 *Location* — type "where" or "branches"\n' +
   '📅 *Booking* — type "book" or "appointment"\n\n' +
@@ -28,6 +29,12 @@ async function routeMessage(userId, messageText, platform) {
 
     case 'DEALS':
       return getDealsReply();
+
+    case 'SERVICE_LIST':
+      return getServiceListReply();
+
+    case 'SERVICE_DETAIL':
+      return getServiceDetail(intent.term);
 
     case 'BRANCH':
       return getBranchesReply();
