@@ -409,6 +409,16 @@ app.post('/webhooks/calendly', (req, res) => {
   res.sendStatus(200);
 });
 
+// ─── Seed db handling ───────────────────────────────────────────────────────────
+app.get("/run-seed", async (req, res) => {
+  try {
+    await require("./src/db/seed.js")();
+    res.send("Seed completed!");
+  } catch (err) {
+    res.status(500).send(err.toString());
+  }
+});
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   logger.info(`Salon Bot server running on port ${PORT}`);
