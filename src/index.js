@@ -412,7 +412,7 @@ app.post('/webhooks/calendly', (req, res) => {
 // ─── Seed db handling ───────────────────────────────────────────────────────────
 app.get("/run-seed", async (req, res) => {
   try {
-    await require("./src/db/seed.js")();
+    await require("./db/seed.js")();
     res.send("Seed completed!");
   } catch (err) {
     res.status(500).send(err.toString());
