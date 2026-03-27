@@ -6,19 +6,23 @@ const db = getDb();
 // Clear existing services and deals (keeps bookings intact)
 db.exec('DELETE FROM deals; DELETE FROM services;');
 
+// ── Deals ─────────────────────────────────────────────────────────────────
 const insertDeal = db.prepare(
   'INSERT INTO deals (title, description, active) VALUES (?, ?, ?)'
 );
 
-// Seed deals
 const deals = [
   ['Weekend Special', 'Get 20% off all hair services every Saturday and Sunday!', 1],
   ['Student Discount', 'Show your student ID and enjoy 15% off any service.', 1],
   ['Loyalty Package', 'Book 5 sessions and get the 6th one FREE!', 1],
   ['New Client Offer', 'First visit? Enjoy a complimentary hair treatment with any service.', 0],
 ];
-for (const d of deals) insertDeal.run(d.title, d.description, d.active);
 
+for (const [title, description, active] of deals) {
+  insertDeal.run(title, description, active);
+}
+
+// ── Services ──────────────────────────────────────────────────────────────
 const insertService = db.prepare(
   'INSERT INTO services (name, price, description, branch) VALUES (?, ?, ?, ?)'
 );
@@ -57,13 +61,13 @@ const services = [
   {
     name: 'Fruit Facial – Deal 1',
     price: 'Rs. 999',
-    desc: 'Fruit Facial · Double Whitening Skin Glow Polisher · 4 Fruit Creams Massage · Shoulder Relaxing Massage · Fruit Face Mask · Blackhead Removal · Hand & Feet Whitening Polisher · Eyebrows & Upper Lips · L\'Oréal Hair Protein Treatment Application',
+    desc: "Fruit Facial · Double Whitening Skin Glow Polisher · 4 Fruit Creams Massage · Shoulder Relaxing Massage · Fruit Face Mask · Blackhead Removal · Hand & Feet Whitening Polisher · Eyebrows & Upper Lips · L'Oréal Hair Protein Treatment Application",
     branch: 'All Branches',
   },
   {
     name: 'Derma Clear Facial – Deal 1',
     price: 'Rs. 2,199',
-    desc: 'Derma Clear Facial · Whitening Skin Polisher · Derma Clear 4 Creams Massage · Face Mask · L\'Oréal Hair Protein Treatment · Eyebrows & Upper Lips · Manicure · Pedicure · Hand & Feet Polisher · Nail Cuticles · Shoulders Relaxing Massage',
+    desc: "Derma Clear Facial · Whitening Skin Polisher · Derma Clear 4 Creams Massage · Face Mask · L'Oréal Hair Protein Treatment · Eyebrows & Upper Lips · Manicure · Pedicure · Hand & Feet Polisher · Nail Cuticles · Shoulders Relaxing Massage",
     branch: 'All Branches',
   },
 
@@ -131,9 +135,9 @@ const services = [
 
   // ── Hair Smoothing & Color ───────────────────────────────────────────────
   {
-    name: 'Keratin / L\'Oréal Xtenso / Rebonding',
+    name: "Keratin / L'Oréal Xtenso / Rebonding",
     price: 'From Rs. 5,999',
-    desc: 'Free: Hair Cutting · Hair Glossing · 1× Hair Wash & Mask | Shoulder Rs.5,999 · Elbow Rs.7,999 · Waist Rs.9,999 · Hip Rs.11,999',
+    desc: 'Free: Hair Cutting · Hair Glossing · 1x Hair Wash & Mask | Shoulder Rs.5,999 · Elbow Rs.7,999 · Waist Rs.9,999 · Hip Rs.11,999',
     branch: 'All Branches',
   },
   {
@@ -167,20 +171,20 @@ const services = [
   {
     name: 'Bridal Makeup Package 1',
     price: 'Rs. 34,995',
-    desc: 'Signature Bridal Makeup · 2 Facials (Janssen + Hydra) · 2× Mani & Pedi (Skin Truth + Whitening) · Full Body Waxing · Full Body Scrubbing · Full Body Polisher · Eyebrows & Upper Lips · Hair Cutting · Hair Protein Treatment',
+    desc: 'Signature Bridal Makeup · 2 Facials (Janssen + Hydra) · 2x Mani & Pedi (Skin Truth + Whitening) · Full Body Waxing · Full Body Scrubbing · Full Body Polisher · Eyebrows & Upper Lips · Hair Cutting · Hair Protein Treatment',
     branch: 'All Branches',
   },
   {
     name: 'Bridal Makeup Package 2',
     price: 'Rs. 24,995',
-    desc: 'Bridal Makeup · 2 Facials (Whitening + Gold) · 2× Mani & Pedi (Skin Truth + Whitening) · Full Body Wax · Full Body Polisher · Eyebrows & Upper Lips · Hair Protein Treatment',
+    desc: 'Bridal Makeup · 2 Facials (Whitening + Gold) · 2x Mani & Pedi (Skin Truth + Whitening) · Full Body Wax · Full Body Polisher · Eyebrows & Upper Lips · Hair Protein Treatment',
     branch: 'All Branches',
   },
 
 ];
 
-for (const s of services) insertService.run(s.name, s.price, s.desc, s.branch);
+for (const s of services) {
+  insertService.run(s.name, s.price, s.desc, s.branch);
+}
 
-runAll();
-
-console.log(`✅ Seeded ${services.length} services successfully!`);
+console.log(`✅ Seeded ${deals.length} deals and ${services.length} services successfully!`);
