@@ -192,17 +192,18 @@ app.post('/admin/services', requireAdminAuth, (req, res) => {
 
     const db = getDb();
     const upsert = db.prepare(`
-      INSERT INTO services (id, name, price, branch, updated_at)
-      VALUES (@id, @name, @price, @branch, datetime('now'))
+      INSERT INTO services (id, name, price, description, branch, updated_at)
+      VALUES (@id, @name, @price, @description, @branch, datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
-        name = excluded.name,
-        price = excluded.price,
-        branch = excluded.branch,
-        updated_at = excluded.updated_at
+        name        = excluded.name,
+        price       = excluded.price,
+        description = excluded.description,
+        branch      = excluded.branch,
+        updated_at  = excluded.updated_at
     `);
     const insert = db.prepare(`
-      INSERT INTO services (name, price, branch, updated_at)
-      VALUES (@name, @price, @branch, datetime('now'))
+      INSERT INTO services (name, price, description, branch, updated_at)
+      VALUES (@name, @price, @description, @branch, datetime('now'))
     `);
 
     const existingIds = new Set(db.prepare('SELECT id FROM services').all().map(r => r.id));
@@ -215,9 +216,9 @@ app.post('/admin/services', requireAdminAuth, (req, res) => {
       }
       for (const svc of services) {
         if (svc.id) {
-          upsert.run({ id: svc.id, name: svc.name, price: svc.price, branch: svc.branch || 'All Branches' });
+          upsert.run({ id: svc.id, name: svc.name, price: svc.price, description: svc.description, branch: svc.branch || 'All Branches' });
         } else {
-          insert.run({ name: svc.name, price: svc.price, branch: svc.branch || 'All Branches' });
+          insert.run({ name: svc.name, price: svc.price, description: svc.description, branch: svc.branch || 'All Branches' });
         }
       }
     });
@@ -310,8 +311,6 @@ app.get('/admin/api/clients', requireAdminAuth, (req, res) => {
 });
 
 // ── Calendly Webhooks ────────────────────────────────────────────────────────────────
-// ─── Calendly Webhook ─────────────────────────────────────────────────────────
-// Paste this into src/index.js alongside your other routes
 
 app.post('/webhooks/calendly', (req, res) => {
   const event = req.body;

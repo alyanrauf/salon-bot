@@ -314,6 +314,18 @@ tr:hover td { background: var(--mist); }
 }
 .pkg-add-btn:hover { border-color: var(--rose); color: var(--rose); }
 
+.pkg-card-desc {
+  font-size: 0.72rem;
+  color: var(--sub);
+  line-height: 1.6;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.pkg-card-desc .dot {
+  color: var(--rose);
+  margin: 0 3px;
+}
 /* ── DEAL CARDS ── */
 .deal-card {
   background: var(--card); border: 1.5px solid var(--border);

@@ -255,14 +255,18 @@ async function loadServices() {
 
 function renderServices() {
   const branch = document.getElementById('branch-filter').value;
-  const list   = branch ? allServices.filter(s => s.branch === branch) : allServices;
-  const grid   = document.getElementById('services-grid');
+  const list = branch ? allServices.filter(s => s.branch === branch) : allServices;
+  const grid = document.getElementById('services-grid');
+
   grid.innerHTML =
     list.map(s => `
       <div class="pkg-card">
         <div class="pkg-card-name">${esc(s.name)}</div>
         <div class="pkg-card-price">${esc(s.price)}</div>
         <div class="pkg-card-branch">📍 ${esc(s.branch)}</div>
+        ${s.description
+        ? `<div class="pkg-card-desc">${esc(s.description).replace(/·/g, '<span class="dot">·</span>')}</div>`
+        : ''}
         <div class="pkg-card-actions">
           <button class="btn btn-sm btn-outline" onclick="editService(${s.id})">Edit</button>
           <button class="btn btn-sm btn-danger"  onclick="deleteService(${s.id})">Delete</button>
@@ -272,9 +276,10 @@ function renderServices() {
 }
 
 function openServiceModal() {
-  document.getElementById('sm-id').value    = '';
-  document.getElementById('sm-name').value  = '';
+  document.getElementById('sm-id').value = '';
+  document.getElementById('sm-name').value = '';
   document.getElementById('sm-price').value = '';
+  document.getElementById('sm-desc').value = '';
   setSelect('sm-branch', 'All Branches');
   document.getElementById('sm-title').textContent = 'Add Service';
   document.getElementById('service-modal').classList.add('open');
@@ -283,19 +288,21 @@ function openServiceModal() {
 function editService(id) {
   const s = allServices.find(x => x.id === id);
   if (!s) return;
-  document.getElementById('sm-id').value    = s.id;
-  document.getElementById('sm-name').value  = s.name;
+  document.getElementById('sm-id').value = s.id;
+  document.getElementById('sm-name').value = s.name;
   document.getElementById('sm-price').value = s.price;
+  document.getElementById('sm-desc').value = s.description || '';
   setSelect('sm-branch', s.branch);
   document.getElementById('sm-title').textContent = 'Edit Service';
   document.getElementById('service-modal').classList.add('open');
 }
 
 async function saveService() {
-  const id   = document.getElementById('sm-id').value;
+  const id = document.getElementById('sm-id').value;
   const body = {
-    name:   document.getElementById('sm-name').value.trim(),
-    price:  document.getElementById('sm-price').value.trim(),
+    name: document.getElementById('sm-name').value.trim(),
+    price: document.getElementById('sm-price').value.trim(),
+    description: document.getElementById('sm-desc').value.trim(),
     branch: document.getElementById('sm-branch').value,
   };
   if (!body.name || !body.price) { toast('Name and price required', 'err'); return; }
@@ -322,6 +329,7 @@ async function saveService() {
     toast(r.error || 'Error', 'err');
   }
 }
+
 
 async function deleteService(id) {
   if (!confirm('Delete this service?')) return;

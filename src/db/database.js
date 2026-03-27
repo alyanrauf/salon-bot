@@ -26,13 +26,14 @@ function initSchema(db) {
     );
 
     CREATE TABLE IF NOT EXISTS services (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      name       TEXT    NOT NULL,
-      price      TEXT    NOT NULL,
-      branch     TEXT    NOT NULL DEFAULT 'All Branches',
-      created_at TEXT    DEFAULT (datetime('now')),
-      updated_at TEXT    DEFAULT (datetime('now'))
-    );
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT    NOT NULL,
+    price       TEXT    NOT NULL,
+    description TEXT,
+    branch      TEXT    NOT NULL DEFAULT 'All Branches',
+    created_at  TEXT    DEFAULT (datetime('now')),
+    updated_at  TEXT    DEFAULT (datetime('now'))
+  );
 
     CREATE TABLE IF NOT EXISTS bookings (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
