@@ -476,5 +476,6 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 //  INIT
 // ══════════════════════════════════════
 (async function init() {
-  await Promise.all([loadStats(), loadBookings(true), loadServices()]);
+  await Promise.all([loadBookings(true), loadServices()]);
+  await loadStats();
 })();

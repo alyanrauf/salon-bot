@@ -410,10 +410,12 @@ app.post('/webhooks/calendly', (req, res) => {
 });
 
 // ─── Seed db handling ───────────────────────────────────────────────────────────
-app.get("/run-seed", async (req, res) => {
+app.get("/run-seed", (req, res) => {
+  if (req.query.key !== "adminkey123") return res.status(401).send("Unauthorized");
   try {
-    await require("./db/seed.js")();
-    res.send("Seed completed!");
+    delete require.cache[require.resolve("./db/seed.js")];
+    require("./db/seed.js")();
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).send(err.toString());
   }
