@@ -375,7 +375,6 @@ app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
   if (!role || !validRoles.includes(role)) errs.push(`role (${validRoles.join(', ')})`);
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
-  const db = getDb();
   const r = db.prepare(
     `INSERT INTO staff (name, phone, role, branch_id, status) VALUES (?, ?, ?, ?, ?)`
   ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active');
