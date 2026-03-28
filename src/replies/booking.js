@@ -13,11 +13,29 @@ function getServiceNames() {
   }
 }
 
+function getActiveStaff(branchName) {
+  try {
+    const db = getDb();
+    // Get staff for the selected branch or staff assigned to no branch
+    const branch = db.prepare('SELECT id FROM branches WHERE name = ?').get(branchName);
+    if (branch) {
+      return db.prepare(`
+        SELECT s.id, s.name, s.role FROM staff s
+        WHERE s.status = 'active' AND (s.branch_id = ? OR s.branch_id IS NULL)
+        ORDER BY s.name
+      `).all(branch.id);
+    }
+    return db.prepare(`SELECT id, name, role FROM staff WHERE status = 'active' ORDER BY name`).all();
+  } catch {
+    return [];
+  }
+}
+
 function saveBooking(data, platform) {
   const db = getDb();
   db.prepare(`
-    INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+    INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
   `).run(
     data.name,
     data.phone,
@@ -25,7 +43,9 @@ function saveBooking(data, platform) {
     data.branch,
     data.date,
     data.time,
-    platform || 'chat'
+    platform || 'chat',
+    data.staffId || null,
+    data.staffName || null
   );
 }
 
@@ -212,9 +232,56 @@ function handleBookingStep(userId, messageText, session, platform) {
         branchList()
       );
     }
-    setSession(userId, { ...session, state: 'ASK_DATE', branch: branch.name });
+    setSession(userId, { ...session, state: 'ASK_STAFF', branch: branch.name });
+    const staffList = getActiveStaff(branch.name);
+    if (!staffList.length) {
+      // No staff configured — skip straight to date
+      setSession(userId, { ...session, state: 'ASK_DATE', branch: branch.name, staffId: null, staffName: null });
+      return (
+        `📍 *${branch.name}* — perfect!\n\n` +
+        'What *date* would you like to come in?\n\n' +
+        '_e.g. 30 March · April 5 · tomorrow_'
+      );
+    }
+    let reply = `📍 *${branch.name}* — perfect!\n\n`;
+    reply += 'Would you like to choose a specific *stylist/staff member*? (optional)\n\n';
+    reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
+    reply += '\n\n_Reply with a number to choose, or type *any* / *skip* for no preference._';
+    setSession(userId, { ...session, state: 'ASK_STAFF', branch: branch.name, staffOptions: staffList });
+    return reply;
+  }
+
+  // ── STEP 5b: Got staff choice → ask date ──────────────────────────────────
+  if (session.state === 'ASK_STAFF') {
+    const staffList = session.staffOptions || [];
+    let staffId = null;
+    let staffName = null;
+
+    const lower = text.toLowerCase();
+    if (lower === 'any' || lower === 'skip' || lower === 'no preference' || lower === 'none') {
+      // No preference — continue
+    } else {
+      const num = parseInt(text, 10);
+      if (!isNaN(num) && num >= 1 && num <= staffList.length) {
+        staffId = staffList[num - 1].id;
+        staffName = staffList[num - 1].name;
+      } else {
+        const match = staffList.find(s => s.name.toLowerCase().includes(lower));
+        if (match) {
+          staffId = match.id;
+          staffName = match.name;
+        } else {
+          let reply = '⚠️ Please choose by *number*, type a *name*, or type *skip* for no preference.\n\n';
+          reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
+          return reply;
+        }
+      }
+    }
+
+    setSession(userId, { ...session, state: 'ASK_DATE', staffId, staffName });
+    const staffMsg = staffName ? `👤 *${staffName}* — great choice!\n\n` : '';
     return (
-      `📍 *${branch.name}* — perfect!\n\n` +
+      staffMsg +
       'What *date* would you like to come in?\n\n' +
       '_e.g. 30 March · April 5 · tomorrow_'
     );
@@ -258,8 +325,8 @@ function handleBookingStep(userId, messageText, session, platform) {
       const timing = getSalonTiming(session.date);
       if (timing) {
         const requested = toMinutes(time24);
-        const open      = toMinutes(timing.open_time);
-        const close     = toMinutes(timing.close_time);
+        const open = toMinutes(timing.open_time);
+        const close = toMinutes(timing.close_time);
         if (requested < open || requested > close) {
           const label = timing.day_type === 'weekend' ? 'weekend' : 'weekday';
           return (
@@ -272,12 +339,14 @@ function handleBookingStep(userId, messageText, session, platform) {
     }
 
     const bookingData = {
-      name:    session.name,
-      phone:   session.phone,
+      name: session.name,
+      phone: session.phone,
       service: session.service,
-      branch:  session.branch,
-      date:    session.date,
-      time:    text,
+      branch: session.branch,
+      date: session.date,
+      time: text,
+      staffId: session.staffId || null,
+      staffName: session.staffName || null,
     };
 
     try {
@@ -295,6 +364,7 @@ function handleBookingStep(userId, messageText, session, platform) {
       `📞 *Phone:* ${bookingData.phone}\n` +
       `✨ *Service:* ${bookingData.service}\n` +
       `📍 *Branch:* ${bookingData.branch}\n` +
+      (bookingData.staffName ? `💅 *Stylist:* ${bookingData.staffName}\n` : '') +
       `📆 *Date:* ${bookingData.date}\n` +
       `🕐 *Time:* ${bookingData.time}\n\n` +
       '⏳ Our team will *confirm your appointment* shortly.\n' +

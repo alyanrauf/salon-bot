@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const logger = require('./utils/logger');
-const { getDb } = require('./db/database');
+const { getDb, invalidateSettingsCache } = require('./db/database');
 
 // Platform handlers
 const { handleWhatsApp, verifyWhatsApp } = require('./handlers/whatsapp');
@@ -264,22 +264,22 @@ app.get('/admin/api/bookings', requireAdminAuth, (req, res) => {
 
 app.post('/admin/api/bookings', requireAdminAuth, (req, res) => {
   const db = getDb();
-  const { customer_name, phone, service, branch, date, time, notes, status } = req.body;
+  const { customer_name, phone, service, branch, date, time, notes, status, staff_id, staff_name } = req.body;
   if (!customer_name) return res.status(400).json({ error: 'customer_name required' });
   const r = db.prepare(`
-    INSERT INTO bookings (customer_name, phone, service, branch, date, time, notes, status, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')
-  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending');
+    INSERT INTO bookings (customer_name, phone, service, branch, date, time, notes, status, source, staff_id, staff_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)
+  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending', staff_id || null, staff_name || null);
   res.json(db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid));
 });
 
 app.put('/admin/api/bookings/:id', requireAdminAuth, (req, res) => {
   const db = getDb();
-  const { customer_name, phone, service, branch, date, time, notes, status } = req.body;
+  const { customer_name, phone, service, branch, date, time, notes, status, staff_id, staff_name } = req.body;
   db.prepare(`
-    UPDATE bookings SET customer_name=?, phone=?, service=?, branch=?, date=?, time=?, notes=?, status=?, updated_at=datetime('now')
+    UPDATE bookings SET customer_name=?, phone=?, service=?, branch=?, date=?, time=?, notes=?, status=?, staff_id=?, staff_name=?, updated_at=datetime('now')
     WHERE id=?
-  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending', req.params.id);
+  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending', staff_id || null, staff_name || null, req.params.id);
   res.json({ ok: true });
 });
 
@@ -319,10 +319,10 @@ app.get('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
 app.post('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
   const { name, address, map_link, phone } = req.body;
   const errs = [];
-  if (!name?.trim())    errs.push('name');
+  if (!name?.trim()) errs.push('name');
   if (!address?.trim()) errs.push('address');
   if (!map_link?.trim() || !map_link.trim().startsWith('http')) errs.push('map_link (must be a valid URL starting with http)');
-  if (!phone?.trim())   errs.push('phone');
+  if (!phone?.trim()) errs.push('phone');
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
   const db = getDb();
@@ -336,10 +336,10 @@ app.post('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
 app.put('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
   const { name, address, map_link, phone } = req.body;
   const errs = [];
-  if (!name?.trim())    errs.push('name');
+  if (!name?.trim()) errs.push('name');
   if (!address?.trim()) errs.push('address');
   if (!map_link?.trim() || !map_link.trim().startsWith('http')) errs.push('map_link');
-  if (!phone?.trim())   errs.push('phone');
+  if (!phone?.trim()) errs.push('phone');
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
   getDb().prepare(
@@ -367,11 +367,12 @@ app.get('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
 
 app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
   const { name, phone, role, branch_id, status } = req.body;
-  const validRoles = ['stylist', 'receptionist', 'admin', 'manager'];
+  const db = getDb();
+  const validRoles = db.prepare('SELECT name FROM staff_roles').all().map(r => r.name);
   const errs = [];
-  if (!name?.trim())              errs.push('name');
-  if (!phone?.trim())             errs.push('phone');
-  if (!role || !validRoles.includes(role)) errs.push('role (stylist, receptionist, admin, manager)');
+  if (!name?.trim()) errs.push('name');
+  if (!phone?.trim()) errs.push('phone');
+  if (!role || !validRoles.includes(role)) errs.push(`role (${validRoles.join(', ')})`);
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
   const db = getDb();
@@ -383,10 +384,11 @@ app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
 
 app.put('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
   const { name, phone, role, branch_id, status } = req.body;
-  const validRoles = ['stylist', 'receptionist', 'admin', 'manager'];
+  const db = getDb();
+  const validRoles = db.prepare('SELECT name FROM staff_roles').all().map(r => r.name);
   const errs = [];
-  if (!name?.trim())              errs.push('name');
-  if (!phone?.trim())             errs.push('phone');
+  if (!name?.trim()) errs.push('name');
+  if (!phone?.trim()) errs.push('phone');
   if (!role || !validRoles.includes(role)) errs.push('role');
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
@@ -414,9 +416,9 @@ app.put('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
   const { workday, weekend } = req.body;
   const timeRx = /^\d{2}:\d{2}$/;
   const errs = [];
-  if (!workday?.open_time  || !timeRx.test(workday.open_time))  errs.push('workday.open_time');
+  if (!workday?.open_time || !timeRx.test(workday.open_time)) errs.push('workday.open_time');
   if (!workday?.close_time || !timeRx.test(workday.close_time)) errs.push('workday.close_time');
-  if (!weekend?.open_time  || !timeRx.test(weekend.open_time))  errs.push('weekend.open_time');
+  if (!weekend?.open_time || !timeRx.test(weekend.open_time)) errs.push('weekend.open_time');
   if (!weekend?.close_time || !timeRx.test(weekend.close_time)) errs.push('weekend.close_time');
   if (errs.length) return res.status(400).json({ error: `Invalid or missing fields: ${errs.join(', ')}` });
   if (workday.close_time <= workday.open_time)
@@ -437,6 +439,50 @@ app.put('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
     upsert.run('workday', workday.open_time, workday.close_time);
     upsert.run('weekend', weekend.open_time, weekend.close_time);
   })();
+  res.json({ ok: true });
+});
+
+// ─── Settings: Staff Roles ─────────────────────────────────────────────────────
+
+app.get('/admin/api/settings/roles', requireAdminAuth, (req, res) => {
+  res.json(getDb().prepare('SELECT * FROM staff_roles ORDER BY name ASC').all());
+});
+
+app.post('/admin/api/settings/roles', requireAdminAuth, (req, res) => {
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'Role name is required' });
+  const normalized = name.trim().toLowerCase();
+  try {
+    const r = getDb().prepare(`INSERT INTO staff_roles (name) VALUES (?)`).run(normalized);
+    res.json(getDb().prepare('SELECT * FROM staff_roles WHERE id = ?').get(r.lastInsertRowid));
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Role already exists' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/admin/api/settings/roles/:id', requireAdminAuth, (req, res) => {
+  getDb().prepare('DELETE FROM staff_roles WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Settings: App Settings (currency etc.) ────────────────────────────────────
+
+app.get('/admin/api/settings/general', requireAdminAuth, (req, res) => {
+  const rows = getDb().prepare('SELECT key, value FROM app_settings').all();
+  const result = {};
+  rows.forEach(r => { result[r.key] = r.value; });
+  res.json(result);
+});
+
+app.put('/admin/api/settings/general', requireAdminAuth, (req, res) => {
+  const { currency } = req.body;
+  if (!currency?.trim()) return res.status(400).json({ error: 'Currency is required' });
+  getDb().prepare(`
+    INSERT INTO app_settings (key, value, updated_at) VALUES ('currency', ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(currency.trim());
+  invalidateSettingsCache();
   res.json({ ok: true });
 });
 

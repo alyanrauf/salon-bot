@@ -2,18 +2,20 @@
 //  STATE
 // ══════════════════════════════════════
 let allServices = [];
-let allDeals    = [];
+let allDeals = [];
 let allBookings = [];
 let allBranches = [];
-let allStaff    = [];
+let allStaff = [];
+let allRoles = [];
+let appCurrency = 'Rs.';
 
 const titles = {
   dashboard: 'Dashboard',
-  bookings:  'Bookings',
-  packages:  'Packages & Prices',
-  deals:     'Deals & Offers',
-  clients:   'Clients',
-  settings:  'Settings',
+  bookings: 'Bookings',
+  packages: 'Packages & Prices',
+  deals: 'Deals & Offers',
+  clients: 'Clients',
+  settings: 'Settings',
 };
 
 // ══════════════════════════════════════
@@ -37,8 +39,8 @@ function showTab(tab, el) {
 
   if (tab === 'bookings') loadBookings();
   if (tab === 'packages') loadServices();
-  if (tab === 'deals')    loadDeals();
-  if (tab === 'clients')  loadClients();
+  if (tab === 'deals') loadDeals();
+  if (tab === 'clients') loadClients();
   if (tab === 'settings') loadSettings();
 }
 
@@ -71,7 +73,7 @@ function esc(s) {
 
 function statusBadge(s) {
   const map = {
-    pending:   'badge-pending',
+    pending: 'badge-pending',
     confirmed: 'badge-confirmed',
     cancelled: 'badge-cancelled',
   };
@@ -99,10 +101,10 @@ async function loadStats() {
 
   try {
     const d = await api('/admin/api/stats');
-    document.getElementById('s-total').textContent    = d.total_bookings   ?? 0;
-    document.getElementById('s-today').textContent    = d.today_bookings   ?? 0;
-    document.getElementById('s-services').textContent = d.active_services  ?? 0;
-    document.getElementById('s-clients').textContent  = d.total_clients    ?? 0;
+    document.getElementById('s-total').textContent = d.total_bookings ?? 0;
+    document.getElementById('s-today').textContent = d.today_bookings ?? 0;
+    document.getElementById('s-services').textContent = d.active_services ?? 0;
+    document.getElementById('s-clients').textContent = d.total_clients ?? 0;
   } catch (e) {
     ['s-total', 's-today', 's-services', 's-clients'].forEach(
       id => (document.getElementById(id).textContent = '0')
@@ -115,15 +117,15 @@ async function loadStats() {
 // ══════════════════════════════════════
 async function loadBookings(recent = false) {
   const tbody = document.getElementById(recent ? 'recent-tbody' : 'bookings-tbody');
-  const cols  = recent ? 7 : 9;
+  const cols = recent ? 7 : 9;
   tbody.innerHTML = `<tr class="loading-row"><td colspan="${cols}"><span class="spinner"></span></td></tr>`;
 
   let url = '/admin/api/bookings';
   if (!recent) {
-    const date   = document.getElementById('f-date')?.value   || '';
+    const date = document.getElementById('f-date')?.value || '';
     const status = document.getElementById('f-status')?.value || '';
     const params = new URLSearchParams();
-    if (date)   params.set('date', date);
+    if (date) params.set('date', date);
     if (status) params.set('status', status);
     if ([...params].length) url += '?' + params;
   } else {
@@ -131,7 +133,7 @@ async function loadBookings(recent = false) {
   }
 
   try {
-    const rows  = await api(url);
+    const rows = await api(url);
     allBookings = rows;
     renderBookings(rows, tbody, recent);
   } catch (e) {
@@ -151,17 +153,17 @@ function renderBookings(rows, tbody, recent = false) {
       <td><strong>${esc(r.customer_name)}</strong></td>
       ${!recent ? `<td>${esc(r.phone || '—')}</td>` : ''}
       <td>${esc(r.service || '—')}</td>
-      <td>${esc(r.branch  || '—')}</td>
-      <td>${esc(r.date    || '—')}</td>
-      <td>${esc(r.time    || '—')}</td>
+      <td>${esc(r.branch || '—')}</td>
+      <td>${esc(r.date || '—')}</td>
+      <td>${esc(r.time || '—')}</td>
       <td>${statusBadge(r.status)}</td>
       <td>
         <button class="btn btn-sm btn-success" onclick="patchStatus(${r.id},'confirmed')">✅</button>
         <button class="btn btn-sm btn-danger"  onclick="patchStatus(${r.id},'cancelled')">❌</button>
         ${!recent
-          ? `<button class="btn btn-sm btn-outline" onclick="editBooking(${r.id})">✏️</button>
+      ? `<button class="btn btn-sm btn-outline" onclick="editBooking(${r.id})">✏️</button>
              <button class="btn btn-sm btn-danger"  onclick="deleteBooking(${r.id})">🗑</button>`
-          : ''}
+      : ''}
       </td>
     </tr>`).join('');
 }
@@ -188,15 +190,16 @@ async function deleteBooking(id) {
 function editBooking(id) {
   const b = allBookings.find(x => x.id === id);
   if (!b) return;
-  document.getElementById('bm-id').value    = b.id;
-  document.getElementById('bm-name').value  = b.customer_name;
-  document.getElementById('bm-phone').value = b.phone  || '';
-  document.getElementById('bm-date').value  = b.date   || '';
-  document.getElementById('bm-time').value  = b.time   || '';
-  document.getElementById('bm-notes').value = b.notes  || '';
+  document.getElementById('bm-id').value = b.id;
+  document.getElementById('bm-name').value = b.customer_name;
+  document.getElementById('bm-phone').value = b.phone || '';
+  document.getElementById('bm-date').value = b.date || '';
+  document.getElementById('bm-time').value = b.time || '';
+  document.getElementById('bm-notes').value = b.notes || '';
   setSelect('bm-branch', b.branch);
   setSelect('bm-status', b.status);
   populateServiceSelect(b.service);
+  populateStaffSelect(b.staff_id);
   document.getElementById('bm-title').textContent = 'Edit Appointment';
   document.getElementById('booking-modal').classList.add('open');
 }
@@ -207,25 +210,33 @@ function openBookingModal() {
   );
   setSelect('bm-status', 'pending');
   populateServiceSelect();
+  populateStaffSelect();
   document.getElementById('bm-title').textContent = 'New Appointment';
   document.getElementById('booking-modal').classList.add('open');
 }
 
 async function saveBooking() {
-  const id   = document.getElementById('bm-id').value;
+  const id = document.getElementById('bm-id').value;
+  const staffSel = document.getElementById('bm-staff');
+  const staffId = staffSel.value || null;
+  const staffName = staffId
+    ? (staffSel.selectedOptions[0]?.text?.split(' (')[0] || null)
+    : null;
   const body = {
     customer_name: document.getElementById('bm-name').value.trim(),
-    phone:         document.getElementById('bm-phone').value.trim(),
-    service:       document.getElementById('bm-service').value,
-    branch:        document.getElementById('bm-branch').value,
-    date:          document.getElementById('bm-date').value,
-    time:          document.getElementById('bm-time').value,
-    notes:         document.getElementById('bm-notes').value.trim(),
-    status:        document.getElementById('bm-status').value,
+    phone: document.getElementById('bm-phone').value.trim(),
+    service: document.getElementById('bm-service').value,
+    branch: document.getElementById('bm-branch').value,
+    date: document.getElementById('bm-date').value,
+    time: document.getElementById('bm-time').value,
+    notes: document.getElementById('bm-notes').value.trim(),
+    status: document.getElementById('bm-status').value,
+    staff_id: staffId,
+    staff_name: staffName,
   };
   if (!body.customer_name) { toast('Name is required', 'err'); return; }
 
-  const url    = id ? `/admin/api/bookings/${id}` : '/admin/api/bookings';
+  const url = id ? `/admin/api/bookings/${id}` : '/admin/api/bookings';
   const method = id ? 'PUT' : 'POST';
   await api(url, { method, body: JSON.stringify(body) });
   toast(id ? 'Appointment updated' : 'Appointment created', 'ok');
@@ -233,6 +244,17 @@ async function saveBooking() {
   loadBookings();
   loadBookings(true);
   loadStats();
+}
+
+function populateStaffSelect(selectedId = null) {
+  const sel = document.getElementById('bm-staff');
+  if (!sel) return;
+  sel.innerHTML =
+    `<option value="">— No preference —</option>` +
+    allStaff
+      .filter(s => s.status === 'active')
+      .map(s => `<option value="${s.id}" ${s.id == selectedId ? 'selected' : ''}>${esc(s.name)} (${esc(s.role)})</option>`)
+      .join('');
 }
 
 function populateServiceSelect(selected = '') {
@@ -275,7 +297,7 @@ function renderServices() {
     list.map(s => `
       <div class="pkg-card">
         <div class="pkg-card-name">${esc(s.name)}</div>
-        <div class="pkg-card-price">${esc(s.price)}</div>
+        <div class="pkg-card-price">${appCurrency} ${esc(s.price)}</div>
         <div class="pkg-card-branch">📍 ${esc(s.branch)}</div>
         ${s.description
         ? `<div class="pkg-card-desc">${esc(s.description).replace(/·/g, '<span class="dot">·</span>')}</div>`
@@ -292,6 +314,7 @@ function openServiceModal() {
   document.getElementById('sm-id').value = '';
   document.getElementById('sm-name').value = '';
   document.getElementById('sm-price').value = '';
+  document.getElementById('sm-price').placeholder = `e.g. 2500`;
   document.getElementById('sm-desc').value = '';
   setSelect('sm-branch', 'All Branches');
   document.getElementById('sm-title').textContent = 'Add Service';
@@ -389,9 +412,9 @@ function renderDeals() {
 }
 
 function openDealModal() {
-  document.getElementById('dm-id').value          = '';
+  document.getElementById('dm-id').value = '';
   document.getElementById('dm-title-input').value = '';
-  document.getElementById('dm-desc').value        = '';
+  document.getElementById('dm-desc').value = '';
   setSelect('dm-active', '1');
   document.getElementById('dm-title').textContent = 'Add Deal';
   document.getElementById('deal-modal').classList.add('open');
@@ -400,21 +423,21 @@ function openDealModal() {
 function editDeal(id) {
   const d = allDeals.find(x => x.id === id);
   if (!d) return;
-  document.getElementById('dm-id').value          = d.id;
+  document.getElementById('dm-id').value = d.id;
   document.getElementById('dm-title-input').value = d.title;
-  document.getElementById('dm-desc').value        = d.description;
+  document.getElementById('dm-desc').value = d.description;
   setSelect('dm-active', String(d.active));
   document.getElementById('dm-title').textContent = 'Edit Deal';
   document.getElementById('deal-modal').classList.add('open');
 }
 
 async function saveDeal() {
-  const id   = document.getElementById('dm-id').value;
+  const id = document.getElementById('dm-id').value;
   const body = {
-    id:          id ? parseInt(id) : undefined,
-    title:       document.getElementById('dm-title-input').value.trim(),
+    id: id ? parseInt(id) : undefined,
+    title: document.getElementById('dm-title-input').value.trim(),
     description: document.getElementById('dm-desc').value.trim(),
-    active:      document.getElementById('dm-active').value === '1',
+    active: document.getElementById('dm-active').value === '1',
   };
   if (!body.title) { toast('Title required', 'err'); return; }
 
@@ -455,7 +478,7 @@ async function deleteDeal(id) {
 // ══════════════════════════════════════
 async function loadClients() {
   try {
-    const rows  = await api('/admin/api/clients');
+    const rows = await api('/admin/api/clients');
     const tbody = document.getElementById('clients-tbody');
     if (!rows.length) {
       tbody.innerHTML = `<tr class="empty-row"><td colspan="5">No clients yet.</td></tr>`;
@@ -509,19 +532,26 @@ function showSettingsTab(tab, el) {
   document.getElementById('stab-' + tab).classList.add('active');
   if (el) el.classList.add('active');
 
+  if (tab === 'general') loadGeneral();
   if (tab === 'branches') loadBranches();
-  if (tab === 'staff')    loadStaff();
-  if (tab === 'timings')  loadTimings();
+  if (tab === 'staff') loadStaff();
+  if (tab === 'roles') loadRoles();
+  if (tab === 'timings') loadTimings();
 }
 
 // Entry point when Settings nav tab is clicked
 async function loadSettings() {
-  // Reset to first sub-tab
+  // Reset to General sub-tab
   document.querySelectorAll('.stab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
-  document.getElementById('stab-branches').classList.add('active');
+  document.getElementById('stab-general').classList.add('active');
   document.querySelector('.stab').classList.add('active');
-  await loadBranches();
+  // Preload all sub-tab data so it's ready when user switches tabs
+  await loadGeneral();
+  loadBranches();
+  loadStaff();
+  loadRoles();
+  loadTimings();
 }
 
 // ── BRANCHES ──────────────────────────────────────────────────────────────────
@@ -562,10 +592,10 @@ let editingBranchId = null;
 
 function openBranchModal(branch) {
   editingBranchId = branch ? branch.id : null;
-  document.getElementById('brm-name').value    = branch ? branch.name     : '';
-  document.getElementById('brm-address').value = branch ? branch.address  : '';
+  document.getElementById('brm-name').value = branch ? branch.name : '';
+  document.getElementById('brm-address').value = branch ? branch.address : '';
   document.getElementById('brm-maplink').value = branch ? branch.map_link : '';
-  document.getElementById('brm-phone').value   = branch ? branch.phone    : '';
+  document.getElementById('brm-phone').value = branch ? branch.phone : '';
   document.getElementById('brm-title').textContent = branch ? 'Edit Branch' : 'Add Branch';
   document.getElementById('branch-modal').classList.add('open');
 }
@@ -577,20 +607,20 @@ function editBranch(id) {
 
 async function saveBranch() {
   const body = {
-    name:     document.getElementById('brm-name').value.trim(),
-    address:  document.getElementById('brm-address').value.trim(),
+    name: document.getElementById('brm-name').value.trim(),
+    address: document.getElementById('brm-address').value.trim(),
     map_link: document.getElementById('brm-maplink').value.trim(),
-    phone:    document.getElementById('brm-phone').value.trim(),
+    phone: document.getElementById('brm-phone').value.trim(),
   };
 
   const errs = [];
-  if (!body.name)    errs.push('Branch Name');
+  if (!body.name) errs.push('Branch Name');
   if (!body.address) errs.push('Address');
   if (!body.map_link || !body.map_link.startsWith('http')) errs.push('Valid Map Link (must start with http)');
-  if (!body.phone)   errs.push('Phone');
+  if (!body.phone) errs.push('Phone');
   if (errs.length) { toast('Required: ' + errs.join(', '), 'err'); return; }
 
-  const url    = editingBranchId ? `/admin/api/settings/branches/${editingBranchId}` : '/admin/api/settings/branches';
+  const url = editingBranchId ? `/admin/api/settings/branches/${editingBranchId}` : '/admin/api/settings/branches';
   const method = editingBranchId ? 'PUT' : 'POST';
   const r = await api(url, { method, body: JSON.stringify(body) });
   if (r.error) { toast(r.error, 'err'); return; }
@@ -644,10 +674,16 @@ let editingStaffId = null;
 
 function openStaffModal(staff) {
   editingStaffId = staff ? staff.id : null;
-  document.getElementById('stm-name').value  = staff ? staff.name  : '';
+  document.getElementById('stm-name').value = staff ? staff.name : '';
   document.getElementById('stm-phone').value = staff ? staff.phone : '';
-  setSelect('stm-role',   staff ? staff.role   : 'stylist');
   setSelect('stm-status', staff ? staff.status : 'active');
+
+  // Populate role select dynamically from DB roles
+  const roleSel = document.getElementById('stm-role');
+  roleSel.innerHTML = allRoles.length
+    ? allRoles.map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('')
+    : `<option value="">No roles defined</option>`;
+  if (staff) setSelect('stm-role', staff.role);
 
   // Populate branch select dynamically
   const branchSel = document.getElementById('stm-branch');
@@ -667,20 +703,20 @@ function editStaff(id) {
 
 async function saveStaff() {
   const body = {
-    name:      document.getElementById('stm-name').value.trim(),
-    phone:     document.getElementById('stm-phone').value.trim(),
-    role:      document.getElementById('stm-role').value,
+    name: document.getElementById('stm-name').value.trim(),
+    phone: document.getElementById('stm-phone').value.trim(),
+    role: document.getElementById('stm-role').value,
     branch_id: document.getElementById('stm-branch').value || null,
-    status:    document.getElementById('stm-status').value,
+    status: document.getElementById('stm-status').value,
   };
 
   const errs = [];
-  if (!body.name)  errs.push('Name');
+  if (!body.name) errs.push('Name');
   if (!body.phone) errs.push('Phone');
-  if (!body.role)  errs.push('Role');
+  if (!body.role) errs.push('Role');
   if (errs.length) { toast('Required: ' + errs.join(', '), 'err'); return; }
 
-  const url    = editingStaffId ? `/admin/api/settings/staff/${editingStaffId}` : '/admin/api/settings/staff';
+  const url = editingStaffId ? `/admin/api/settings/staff/${editingStaffId}` : '/admin/api/settings/staff';
   const method = editingStaffId ? 'PUT' : 'POST';
   const r = await api(url, { method, body: JSON.stringify(body) });
   if (r.error) { toast(r.error, 'err'); return; }
@@ -703,11 +739,11 @@ async function loadTimings() {
   try {
     const d = await api('/admin/api/settings/timings');
     if (d.workday) {
-      document.getElementById('tm-workday-open').value  = d.workday.open_time;
+      document.getElementById('tm-workday-open').value = d.workday.open_time;
       document.getElementById('tm-workday-close').value = d.workday.close_time;
     }
     if (d.weekend) {
-      document.getElementById('tm-weekend-open').value  = d.weekend.open_time;
+      document.getElementById('tm-weekend-open').value = d.weekend.open_time;
       document.getElementById('tm-weekend-close').value = d.weekend.close_time;
     }
   } catch (e) {
@@ -718,17 +754,17 @@ async function loadTimings() {
 async function saveTimings() {
   const body = {
     workday: {
-      open_time:  document.getElementById('tm-workday-open').value,
+      open_time: document.getElementById('tm-workday-open').value,
       close_time: document.getElementById('tm-workday-close').value,
     },
     weekend: {
-      open_time:  document.getElementById('tm-weekend-open').value,
+      open_time: document.getElementById('tm-weekend-open').value,
       close_time: document.getElementById('tm-weekend-close').value,
     },
   };
 
   if (!body.workday.open_time || !body.workday.close_time ||
-      !body.weekend.open_time || !body.weekend.close_time) {
+    !body.weekend.open_time || !body.weekend.close_time) {
     toast('Please fill in all time fields', 'err'); return;
   }
   if (body.workday.close_time <= body.workday.open_time) {
@@ -747,6 +783,113 @@ async function saveTimings() {
 }
 
 // ══════════════════════════════════════
+//  GENERAL SETTINGS (currency etc.)
+// ══════════════════════════════════════
+
+async function loadGeneral() {
+  try {
+    const d = await api('/admin/api/settings/general');
+    const currency = d.currency || 'Rs.';
+    const sel = document.getElementById('gen-currency');
+    const knownValues = [...sel.options].map(o => o.value).filter(v => v !== 'custom');
+    if (knownValues.includes(currency)) {
+      setSelect('gen-currency', currency);
+      document.getElementById('gen-currency-custom-row').style.display = 'none';
+    } else {
+      setSelect('gen-currency', 'custom');
+      document.getElementById('gen-currency-custom').value = currency;
+      document.getElementById('gen-currency-custom-row').style.display = '';
+    }
+  } catch (e) {
+    toast('Could not load settings', 'err');
+  }
+}
+
+// Show/hide custom currency input when dropdown changes
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('gen-currency');
+  if (sel) sel.addEventListener('change', () => {
+    document.getElementById('gen-currency-custom-row').style.display =
+      sel.value === 'custom' ? '' : 'none';
+  });
+});
+
+async function saveGeneral() {
+  const sel = document.getElementById('gen-currency');
+  const currency = sel.value === 'custom'
+    ? document.getElementById('gen-currency-custom').value.trim()
+    : sel.value;
+  if (!currency) { toast('Please enter a currency prefix', 'err'); return; }
+  const r = await api('/admin/api/settings/general', {
+    method: 'PUT',
+    body: JSON.stringify({ currency }),
+  });
+  if (r.ok) {
+    appCurrency = currency;
+    const priceInput = document.getElementById('sm-price');
+    if (priceInput) priceInput.placeholder = `e.g. 2500`;
+    toast('Settings saved', 'ok');
+  } else {
+    toast(r.error || 'Error saving settings', 'err');
+  }
+}
+
+// ══════════════════════════════════════
+//  ROLES
+// ══════════════════════════════════════
+
+async function loadRoles() {
+  const tbody = document.getElementById('roles-tbody');
+  tbody.innerHTML = `<tr class="loading-row"><td colspan="2"><span class="spinner"></span></td></tr>`;
+  try {
+    allRoles = await api('/admin/api/settings/roles');
+    renderRoles();
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="2">Could not load roles.</td></tr>`;
+  }
+}
+
+function renderRoles() {
+  const tbody = document.getElementById('roles-tbody');
+  if (!allRoles.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="2">No roles defined yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = allRoles.map(r => `
+    <tr>
+      <td><span class="role-badge">${esc(r.name)}</span></td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="deleteRole(${r.id}, '${esc(r.name)}')">🗑 Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+function openRoleModal() {
+  document.getElementById('role-name-input').value = '';
+  document.getElementById('role-modal').classList.add('open');
+}
+
+async function saveRole() {
+  const name = document.getElementById('role-name-input').value.trim();
+  if (!name) { toast('Please enter a role name', 'err'); return; }
+  const r = await api('/admin/api/settings/roles', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+  if (r.error) { toast(r.error, 'err'); return; }
+  toast('Role added', 'ok');
+  closeModal('role-modal');
+  await loadRoles();
+}
+
+async function deleteRole(id, name) {
+  if (!confirm(`Delete role "${name}"? Staff with this role will keep it as a label, but it won't appear in the dropdown anymore.`)) return;
+  await api(`/admin/api/settings/roles/${id}`, { method: 'DELETE' });
+  toast('Role deleted', 'ok');
+  await loadRoles();
+}
+
+// ══════════════════════════════════════
 //  MODAL CLOSE ON OVERLAY CLICK
 // ══════════════════════════════════════
 document.querySelectorAll('.modal-overlay').forEach(o => {
@@ -759,10 +902,28 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 //  INIT
 // ══════════════════════════════════════
 (async function init() {
-  // Load branches first so all selects can be populated immediately
+  // Load branches and roles first so all selects can be populated immediately
   try {
     allBranches = await api('/admin/api/settings/branches');
     populateBranchSelects();
+  } catch (e) { /* non-fatal */ }
+
+  try {
+    allRoles = await api('/admin/api/settings/roles');
+  } catch (e) { /* non-fatal */ }
+
+  // Load currency setting into cache
+  try {
+    const settings = await api('/admin/api/settings/general');
+    if (settings.currency) appCurrency = settings.currency;
+    // Update price placeholder in service modal
+    const priceInput = document.getElementById('sm-price');
+    if (priceInput) priceInput.placeholder = `e.g. 2500`;
+  } catch (e) { /* non-fatal */ }
+
+  // Load staff for booking modal
+  try {
+    allStaff = await api('/admin/api/settings/staff');
   } catch (e) { /* non-fatal */ }
 
   await Promise.all([loadBookings(true), loadServices()]);
