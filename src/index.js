@@ -262,24 +262,80 @@ app.get('/admin/api/bookings', requireAdminAuth, (req, res) => {
   res.json(db.prepare(sql).all(...args));
 });
 
+// ── Booking validation helpers ────────────────────────────────────────────────
+
+function validateBookingBody(body) {
+  const { customer_name, phone, service, branch, date, time, status } = body;
+  const errs = [];
+  if (!customer_name?.trim()) errs.push('customer_name');
+  if (!phone?.trim())         errs.push('phone');
+  if (!service?.trim())       errs.push('service');
+  if (!branch?.trim())        errs.push('branch');
+  if (!status?.trim())        errs.push('status');
+  if (!time?.trim())          errs.push('time');
+  if (!date?.trim()) {
+    errs.push('date');
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    if (date.trim() < today) errs.push('date (cannot be in the past)');
+  }
+  return errs;
+}
+
+function checkStaffBranch(staff_id, branch, db) {
+  if (!staff_id) return null;  // staff is optional
+  const staff = db.prepare('SELECT * FROM staff WHERE id = ?').get(staff_id);
+  if (!staff) return 'Selected staff member not found.';
+  if (staff.branch_id === null) return null;  // unassigned staff — allowed at any branch
+  const br = db.prepare('SELECT id FROM branches WHERE name = ?').get(branch);
+  if (!br || staff.branch_id !== br.id)
+    return 'Selected staff does not belong to this branch.';
+  return null;
+}
+
+function checkBookingTiming(date, time, db) {
+  const dow = new Date(date).getDay();
+  const dayType = (dow === 0 || dow === 6) ? 'weekend' : 'workday';
+  const timing = db.prepare('SELECT * FROM salon_timings WHERE day_type = ?').get(dayType);
+  if (!timing) return null;
+  const [rh, rm] = time.split(':').map(Number);
+  const requested = rh * 60 + rm;
+  const [oh, om] = timing.open_time.split(':').map(Number);
+  const [ch, cm] = timing.close_time.split(':').map(Number);
+  if (requested < oh * 60 + om || requested > ch * 60 + cm)
+    return `Time ${time} is outside ${dayType} hours (${timing.open_time}–${timing.close_time})`;
+  return null;
+}
+
 app.post('/admin/api/bookings', requireAdminAuth, (req, res) => {
   const db = getDb();
   const { customer_name, phone, service, branch, date, time, notes, status, staff_id, staff_name } = req.body;
-  if (!customer_name) return res.status(400).json({ error: 'customer_name required' });
+  const errs = validateBookingBody(req.body);
+  if (errs.length) return res.status(400).json({ ok: false, error: `Required fields missing or invalid: ${errs.join(', ')}` });
+  const timingErr = checkBookingTiming(date.trim(), time.trim(), db);
+  if (timingErr) return res.status(400).json({ ok: false, error: timingErr });
+  const staffErr = checkStaffBranch(staff_id, branch.trim(), db);
+  if (staffErr) return res.status(400).json({ ok: false, error: staffErr });
   const r = db.prepare(`
     INSERT INTO bookings (customer_name, phone, service, branch, date, time, notes, status, source, staff_id, staff_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)
-  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending', staff_id || null, staff_name || null);
+  `).run(customer_name.trim(), phone.trim(), service.trim(), branch.trim(), date.trim(), time.trim(), notes || null, status.trim(), staff_id || null, staff_name || null);
   res.json(db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid));
 });
 
 app.put('/admin/api/bookings/:id', requireAdminAuth, (req, res) => {
   const db = getDb();
   const { customer_name, phone, service, branch, date, time, notes, status, staff_id, staff_name } = req.body;
+  const errs = validateBookingBody(req.body);
+  if (errs.length) return res.status(400).json({ ok: false, error: `Required fields missing or invalid: ${errs.join(', ')}` });
+  const timingErr = checkBookingTiming(date.trim(), time.trim(), db);
+  if (timingErr) return res.status(400).json({ ok: false, error: timingErr });
+  const staffErr = checkStaffBranch(staff_id, branch.trim(), db);
+  if (staffErr) return res.status(400).json({ ok: false, error: staffErr });
   db.prepare(`
     UPDATE bookings SET customer_name=?, phone=?, service=?, branch=?, date=?, time=?, notes=?, status=?, staff_id=?, staff_name=?, updated_at=datetime('now')
     WHERE id=?
-  `).run(customer_name, phone || null, service || null, branch || null, date || null, time || null, notes || null, status || 'pending', staff_id || null, staff_name || null, req.params.id);
+  `).run(customer_name.trim(), phone.trim(), service.trim(), branch.trim(), date.trim(), time.trim(), notes || null, status.trim(), staff_id || null, staff_name || null, req.params.id);
   res.json({ ok: true });
 });
 

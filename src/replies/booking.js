@@ -65,11 +65,24 @@ function isValidPhone(text) {
 }
 
 // Validates date: accepts formats like "30 March", "April 5", "2026-04-05", "tomorrow"
+// Rejects dates in the past (before today)
 function isValidDate(text) {
   const t = text.trim().toLowerCase();
   if (t === 'tomorrow' || t === 'today') return true;
-  return /^(\d{1,2}\s+\w+|\w+\s+\d{1,2})(\s+\d{4})?$/.test(t) ||
+  const formatOk = /^(\d{1,2}\s+\w+|\w+\s+\d{1,2})(\s+\d{4})?$/.test(t) ||
     /^\d{4}-\d{2}-\d{2}$/.test(t);
+  if (!formatOk) return false;
+  // Parse into a Date object (same pattern as isWeekendDate below)
+  let d = new Date(text);
+  if (isNaN(d.getTime())) {
+    d = new Date(text + ' ' + new Date().getFullYear());
+  }
+  if (isNaN(d.getTime())) return false;
+  // Reject dates before today
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  d.setHours(0, 0, 0, 0);
+  return d >= today;
 }
 
 // Validates time: "2pm", "2:30 PM", "14:00", "11am"
@@ -329,9 +342,28 @@ function handleBookingStep(userId, messageText, session, platform) {
         const close = toMinutes(timing.close_time);
         if (requested < open || requested > close) {
           const label = timing.day_type === 'weekend' ? 'weekend' : 'weekday';
+          const openFmt  = formatTime12h(timing.open_time);
+          const closeFmt = formatTime12h(timing.close_time);
+          const platform = session.platform || 'whatsapp';
+
+          if (platform === 'instagram' || platform === 'facebook') {
+            // Plain text — no WhatsApp markdown
+            return (
+              `Unavailable time selected.\n\n` +
+              `Our ${label} hours are ${openFmt} to ${closeFmt}.\n` +
+              `Please reply with a time within that range.`
+            );
+          }
+          if (platform === 'webchat') {
+            return (
+              `Selected time is not available. ` +
+              `Please choose a slot between ${openFmt} and ${closeFmt}.`
+            );
+          }
+          // Default: WhatsApp — markdown formatting
           return (
             `⚠️ That time is outside our ${label} hours.\n\n` +
-            `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n` +
+            `🕐 Available: *${openFmt} – ${closeFmt}*\n\n` +
             'Please choose a time within that range.'
           );
         }

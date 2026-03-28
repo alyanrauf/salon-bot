@@ -8,6 +8,7 @@ let allBranches = [];
 let allStaff = [];
 let allRoles = [];
 let appCurrency = 'Rs.';
+let allTimings = {};  // { workday: {open_time, close_time}, weekend: {open_time, close_time} }
 
 const titles = {
   dashboard: 'Dashboard',
@@ -199,7 +200,10 @@ function editBooking(id) {
   setSelect('bm-branch', b.branch);
   setSelect('bm-status', b.status);
   populateServiceSelect(b.service);
-  populateStaffSelect(b.staff_id);
+  populateStaffSelect(b.staff_id, b.branch);
+  document.getElementById('bm-date').min = new Date().toISOString().slice(0, 10);
+  document.getElementById('bm-time-error').textContent = '';
+  setPhonePlaceholder(b.branch);
   document.getElementById('bm-title').textContent = 'Edit Appointment';
   document.getElementById('booking-modal').classList.add('open');
 }
@@ -211,6 +215,9 @@ function openBookingModal() {
   setSelect('bm-status', 'pending');
   populateServiceSelect();
   populateStaffSelect();
+  document.getElementById('bm-date').min = new Date().toISOString().slice(0, 10);
+  document.getElementById('bm-time-error').textContent = '';
+  setPhonePlaceholder();
   document.getElementById('bm-title').textContent = 'New Appointment';
   document.getElementById('booking-modal').classList.add('open');
 }
@@ -234,11 +241,28 @@ async function saveBooking() {
     staff_id: staffId,
     staff_name: staffName,
   };
-  if (!body.customer_name) { toast('Name is required', 'err'); return; }
+  // Validate all required fields
+  const missing = [];
+  if (!body.customer_name) missing.push('Client Name');
+  if (!body.phone)         missing.push('Phone');
+  if (!body.service)       missing.push('Service');
+  if (!body.branch)        missing.push('Branch');
+  if (!body.status)        missing.push('Status');
+  if (!body.date)          missing.push('Date');
+  if (!body.time)          missing.push('Time');
+  if (missing.length) { toast('Required: ' + missing.join(', '), 'err'); return; }
+
+  // Client-side past-date check
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (body.date < todayStr) { toast('Date cannot be in the past', 'err'); return; }
+
+  // Real-time time availability check
+  if (!validateTimeInput()) { toast('Selected time is outside salon hours', 'err'); return; }
 
   const url = id ? `/admin/api/bookings/${id}` : '/admin/api/bookings';
   const method = id ? 'PUT' : 'POST';
-  await api(url, { method, body: JSON.stringify(body) });
+  const r = await api(url, { method, body: JSON.stringify(body) });
+  if (!r || r.ok === false) { toast(r?.error || 'Error saving booking', 'err'); return; }
   toast(id ? 'Appointment updated' : 'Appointment created', 'ok');
   closeModal('booking-modal');
   loadBookings();
@@ -246,13 +270,20 @@ async function saveBooking() {
   loadStats();
 }
 
-function populateStaffSelect(selectedId = null) {
+function populateStaffSelect(selectedId = null, branchName = null) {
   const sel = document.getElementById('bm-staff');
   if (!sel) return;
+  let staffList = allStaff.filter(s => s.status === 'active');
+  if (branchName) {
+    const branch = allBranches.find(b => b.name === branchName);
+    if (branch) {
+      // Show staff assigned to this branch, or staff with no branch assigned
+      staffList = staffList.filter(s => s.branch_id === branch.id || s.branch_id === null);
+    }
+  }
   sel.innerHTML =
     `<option value="">— No preference —</option>` +
-    allStaff
-      .filter(s => s.status === 'active')
+    staffList
       .map(s => `<option value="${s.id}" ${s.id == selectedId ? 'selected' : ''}>${esc(s.name)} (${esc(s.role)})</option>`)
       .join('');
 }
@@ -265,6 +296,91 @@ function populateServiceSelect(selected = '') {
       .map(s => `<option value="${esc(s.name)}" ${s.name === selected ? 'selected' : ''}>${esc(s.name)} (${esc(s.price)})</option>`)
       .join('');
 }
+
+// ── Phone placeholder helpers ──────────────────────────────────────────────────
+
+const COUNTRY_PHONE_CODES = { PK: '+92', IN: '+91', AE: '+971', SA: '+966', US: '+1', GB: '+44' };
+
+const BRANCH_KEYWORDS = [
+  { kw: ['pakistan', 'lahore', 'karachi', 'islamabad', 'rawalpindi', 'faisalabad'], code: 'PK' },
+  { kw: ['india', 'delhi', 'mumbai', 'bangalore', 'chennai', 'hyderabad'],          code: 'IN' },
+  { kw: ['dubai', 'uae', 'abu dhabi', 'sharjah', 'ajman', 'united arab'],           code: 'AE' },
+  { kw: ['saudi', 'riyadh', 'jeddah', 'ksa'],                                       code: 'SA' },
+  { kw: ['uk', 'united kingdom', 'london', 'manchester'],                            code: 'GB' },
+  { kw: ['usa', 'united states', 'new york', 'los angeles'],                         code: 'US' },
+];
+
+const LOCALE_MAP = {
+  'ur': 'PK', 'ur-PK': 'PK', 'en-PK': 'PK',
+  'hi': 'IN', 'hi-IN': 'IN', 'en-IN': 'IN',
+  'ar-AE': 'AE', 'en-AE': 'AE',
+  'ar-SA': 'SA',
+  'en-GB': 'GB',
+  'en-US': 'US',
+};
+
+function setPhonePlaceholder(branchName = null) {
+  const el = document.getElementById('bm-phone');
+  if (!el) return;
+  let code = null;
+  // 1. Detect from selected branch address
+  if (branchName && allBranches.length) {
+    const br = allBranches.find(b => b.name === branchName);
+    if (br && br.address) {
+      const a = br.address.toLowerCase();
+      for (const e of BRANCH_KEYWORDS) {
+        if (e.kw.some(k => a.includes(k))) { code = e.code; break; }
+      }
+    }
+  }
+  // 2. Fallback: browser locale
+  if (!code) {
+    const lang = navigator.language || '';
+    code = LOCALE_MAP[lang] || LOCALE_MAP[lang.split('-')[0]] || null;
+  }
+  el.placeholder = (code ? COUNTRY_PHONE_CODES[code] : '+__') + ' 300 1234567';
+}
+
+// ── Real-time time availability validation ────────────────────────────────────
+
+function validateTimeInput() {
+  const dateVal = document.getElementById('bm-date').value;
+  const timeVal = document.getElementById('bm-time').value;
+  const errEl = document.getElementById('bm-time-error');
+  if (errEl) errEl.textContent = '';
+  if (!timeVal || !dateVal) return true;  // nothing to validate yet
+
+  const dow = new Date(dateVal).getDay();
+  const dayType = (dow === 0 || dow === 6) ? 'weekend' : 'workday';
+  const timing = allTimings[dayType];
+  if (!timing) return true;  // no timings configured — allow
+
+  const [rh, rm] = timeVal.split(':').map(Number);
+  const requested = rh * 60 + rm;
+  const [oh, om] = timing.open_time.split(':').map(Number);
+  const [ch, cm] = timing.close_time.split(':').map(Number);
+
+  if (requested < oh * 60 + om || requested > ch * 60 + cm) {
+    if (errEl) errEl.textContent =
+      `Selected time is not available. Please choose a slot between ${timing.open_time} and ${timing.close_time}.`;
+    return false;
+  }
+  return true;
+}
+
+// ── Booking modal field event listeners ──────────────────────────────────────
+
+document.addEventListener('DOMContentLoaded', () => {
+  const timeInput  = document.getElementById('bm-time');
+  const dateInput  = document.getElementById('bm-date');
+  const branchSel  = document.getElementById('bm-branch');
+
+  if (timeInput)  timeInput.addEventListener('change', validateTimeInput);
+  if (dateInput)  dateInput.addEventListener('change', validateTimeInput);
+  if (branchSel)  branchSel.addEventListener('change', function () {
+    populateStaffSelect(null, this.value);
+  });
+});
 
 // ══════════════════════════════════════
 //  SERVICES
@@ -924,6 +1040,11 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
   // Load staff for booking modal
   try {
     allStaff = await api('/admin/api/settings/staff');
+  } catch (e) { /* non-fatal */ }
+
+  // Load salon timings for real-time time validation in booking modal
+  try {
+    allTimings = await api('/admin/api/settings/timings');
   } catch (e) { /* non-fatal */ }
 
   await Promise.all([loadBookings(true), loadServices()]);

@@ -450,3 +450,11 @@ tr:hover td { background: var(--mist); }
   font-size: 0.78rem; font-weight: 600;
 }
 .map-link:hover { text-decoration: underline; }
+
+.field-error {
+  color: var(--red);
+  font-size: 0.75rem;
+  margin-top: 4px;
+  min-height: 1em;
+  line-height: 1.3;
+}

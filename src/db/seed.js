@@ -4,7 +4,17 @@ const { getDb } = require('./database');
 module.exports = function () {
   const db = getDb();
 
+  // NOTE: Branches are NOT seeded here — they start empty.
+  // Create branches via admin Settings → Branches panel.
+  // Staff seeding is conditional: runs only if branches exist AND staff table is empty.
+
   db.exec('DELETE FROM deals; DELETE FROM services;');
+
+  // Seed default currency if not already set
+  if (!db.prepare("SELECT value FROM app_settings WHERE key = 'currency'").get()) {
+    db.prepare("INSERT INTO app_settings (key, value) VALUES ('currency', 'Rs.')").run();
+    console.log('✅ Seeded default currency: Rs.');
+  }
 
   const insertDeal = db.prepare(
     'INSERT INTO deals (title, description, active) VALUES (?, ?, ?)'
@@ -186,4 +196,23 @@ module.exports = function () {
   }
 
   console.log(`✅ Seeded ${deals.length} deals and ${services.length} services successfully!`);
+
+  // Seed sample staff — only if branches exist AND no staff have been added yet
+  const branches = db.prepare('SELECT id, name FROM branches ORDER BY id').all();
+  if (branches.length > 0) {
+    const existingStaff = db.prepare('SELECT COUNT(*) as c FROM staff').get().c;
+    if (existingStaff === 0) {
+      const ins = db.prepare(
+        `INSERT INTO staff (name, phone, role, branch_id, status) VALUES (?, ?, ?, ?, 'active')`
+      );
+      ins.run('Sara Ahmed',  '03001234567', 'stylist',      branches[0].id);
+      ins.run('Nadia Malik', '03011234567', 'stylist',      branches[0].id);
+      ins.run('Aisha Khan',  '03021234567', 'receptionist', branches[0].id);
+      console.log(`✅ Seeded 3 sample staff to branch: ${branches[0].name}`);
+    } else {
+      console.log(`ℹ️  Staff seeding skipped: ${existingStaff} staff already exist.`);
+    }
+  } else {
+    console.log('ℹ️  Staff seeding skipped: no branches exist. Create branches first via admin Settings → Branches.');
+  }
 };
