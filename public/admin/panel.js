@@ -4,6 +4,8 @@
 let allServices = [];
 let allDeals    = [];
 let allBookings = [];
+let allBranches = [];
+let allStaff    = [];
 
 const titles = {
   dashboard: 'Dashboard',
@@ -11,6 +13,7 @@ const titles = {
   packages:  'Packages & Prices',
   deals:     'Deals & Offers',
   clients:   'Clients',
+  settings:  'Settings',
 };
 
 // ══════════════════════════════════════
@@ -36,6 +39,7 @@ function showTab(tab, el) {
   if (tab === 'packages') loadServices();
   if (tab === 'deals')    loadDeals();
   if (tab === 'clients')  loadClients();
+  if (tab === 'settings') loadSettings();
 }
 
 // ══════════════════════════════════════
@@ -246,6 +250,15 @@ function populateServiceSelect(selected = '') {
 async function loadServices() {
   try {
     allServices = await api('/admin/api/services');
+    // Rebuild branch filter options dynamically
+    const filter = document.getElementById('branch-filter');
+    if (filter && allBranches.length) {
+      const currentVal = filter.value;
+      filter.innerHTML =
+        `<option value="">All Branches</option><option value="All Branches">General</option>` +
+        allBranches.map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('');
+      if (currentVal) setSelect('branch-filter', currentVal);
+    }
     renderServices();
   } catch (e) {
     document.getElementById('services-grid').innerHTML =
@@ -329,7 +342,6 @@ async function saveService() {
     toast(r.error || 'Error', 'err');
   }
 }
-
 
 async function deleteService(id) {
   if (!confirm('Delete this service?')) return;
@@ -464,6 +476,277 @@ async function loadClients() {
 }
 
 // ══════════════════════════════════════
+//  SETTINGS
+// ══════════════════════════════════════
+
+// Populate all branch <select> elements across the admin panel from allBranches
+function populateBranchSelects() {
+  // Booking modal branch select
+  const bmBranch = document.getElementById('bm-branch');
+  if (bmBranch) {
+    const cur = bmBranch.value;
+    bmBranch.innerHTML =
+      `<option value="All Branches">All Branches</option>` +
+      allBranches.map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('');
+    if (cur) setSelect('bm-branch', cur);
+  }
+
+  // Service modal branch select
+  const smBranch = document.getElementById('sm-branch');
+  if (smBranch) {
+    const cur = smBranch.value;
+    smBranch.innerHTML =
+      `<option value="All Branches">All Branches</option>` +
+      allBranches.map(b => `<option value="${esc(b.name)}">${esc(b.name)}</option>`).join('');
+    if (cur) setSelect('sm-branch', cur);
+  }
+}
+
+// Show a settings sub-tab
+function showSettingsTab(tab, el) {
+  document.querySelectorAll('.stab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.getElementById('stab-' + tab).classList.add('active');
+  if (el) el.classList.add('active');
+
+  if (tab === 'branches') loadBranches();
+  if (tab === 'staff')    loadStaff();
+  if (tab === 'timings')  loadTimings();
+}
+
+// Entry point when Settings nav tab is clicked
+async function loadSettings() {
+  // Reset to first sub-tab
+  document.querySelectorAll('.stab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.getElementById('stab-branches').classList.add('active');
+  document.querySelector('.stab').classList.add('active');
+  await loadBranches();
+}
+
+// ── BRANCHES ──────────────────────────────────────────────────────────────────
+
+async function loadBranches() {
+  const tbody = document.getElementById('branches-tbody');
+  tbody.innerHTML = `<tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>`;
+  try {
+    allBranches = await api('/admin/api/settings/branches');
+    renderBranches();
+    populateBranchSelects();
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Could not load branches.</td></tr>`;
+  }
+}
+
+function renderBranches() {
+  const tbody = document.getElementById('branches-tbody');
+  if (!allBranches.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No branches added yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = allBranches.map(b => `
+    <tr>
+      <td><strong>#${b.number}</strong></td>
+      <td>${esc(b.name)}</td>
+      <td>${esc(b.address)}</td>
+      <td>${esc(b.phone)}</td>
+      <td><a href="${esc(b.map_link)}" target="_blank" class="map-link">View Map ↗</a></td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="editBranch(${b.id})">✏️ Edit</button>
+        <button class="btn btn-sm btn-danger"  onclick="deleteBranch(${b.id})">🗑 Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+let editingBranchId = null;
+
+function openBranchModal(branch) {
+  editingBranchId = branch ? branch.id : null;
+  document.getElementById('brm-name').value    = branch ? branch.name     : '';
+  document.getElementById('brm-address').value = branch ? branch.address  : '';
+  document.getElementById('brm-maplink').value = branch ? branch.map_link : '';
+  document.getElementById('brm-phone').value   = branch ? branch.phone    : '';
+  document.getElementById('brm-title').textContent = branch ? 'Edit Branch' : 'Add Branch';
+  document.getElementById('branch-modal').classList.add('open');
+}
+
+function editBranch(id) {
+  const b = allBranches.find(x => x.id === id);
+  if (b) openBranchModal(b);
+}
+
+async function saveBranch() {
+  const body = {
+    name:     document.getElementById('brm-name').value.trim(),
+    address:  document.getElementById('brm-address').value.trim(),
+    map_link: document.getElementById('brm-maplink').value.trim(),
+    phone:    document.getElementById('brm-phone').value.trim(),
+  };
+
+  const errs = [];
+  if (!body.name)    errs.push('Branch Name');
+  if (!body.address) errs.push('Address');
+  if (!body.map_link || !body.map_link.startsWith('http')) errs.push('Valid Map Link (must start with http)');
+  if (!body.phone)   errs.push('Phone');
+  if (errs.length) { toast('Required: ' + errs.join(', '), 'err'); return; }
+
+  const url    = editingBranchId ? `/admin/api/settings/branches/${editingBranchId}` : '/admin/api/settings/branches';
+  const method = editingBranchId ? 'PUT' : 'POST';
+  const r = await api(url, { method, body: JSON.stringify(body) });
+  if (r.error) { toast(r.error, 'err'); return; }
+
+  toast(editingBranchId ? 'Branch updated' : 'Branch added', 'ok');
+  closeModal('branch-modal');
+  loadBranches();
+}
+
+async function deleteBranch(id) {
+  if (!confirm('Delete this branch? This cannot be undone.')) return;
+  await api(`/admin/api/settings/branches/${id}`, { method: 'DELETE' });
+  toast('Branch deleted', 'ok');
+  loadBranches();
+}
+
+// ── STAFF ─────────────────────────────────────────────────────────────────────
+
+async function loadStaff() {
+  const tbody = document.getElementById('staff-tbody');
+  tbody.innerHTML = `<tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>`;
+  try {
+    allStaff = await api('/admin/api/settings/staff');
+    renderStaff();
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">Could not load staff.</td></tr>`;
+  }
+}
+
+function renderStaff() {
+  const tbody = document.getElementById('staff-tbody');
+  if (!allStaff.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="6">No staff added yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = allStaff.map(s => `
+    <tr>
+      <td><strong>${esc(s.name)}</strong></td>
+      <td>${esc(s.phone)}</td>
+      <td><span class="role-badge">${esc(s.role)}</span></td>
+      <td>${esc(s.branch_name || '—')}</td>
+      <td><span class="badge ${s.status === 'active' ? 'badge-confirmed' : 'badge-inactive'}">${esc(s.status)}</span></td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="editStaff(${s.id})">✏️ Edit</button>
+        <button class="btn btn-sm btn-danger"  onclick="deleteStaff(${s.id})">🗑 Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+let editingStaffId = null;
+
+function openStaffModal(staff) {
+  editingStaffId = staff ? staff.id : null;
+  document.getElementById('stm-name').value  = staff ? staff.name  : '';
+  document.getElementById('stm-phone').value = staff ? staff.phone : '';
+  setSelect('stm-role',   staff ? staff.role   : 'stylist');
+  setSelect('stm-status', staff ? staff.status : 'active');
+
+  // Populate branch select dynamically
+  const branchSel = document.getElementById('stm-branch');
+  branchSel.innerHTML =
+    `<option value="">— None —</option>` +
+    allBranches.map(b => `<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  if (staff && staff.branch_id) setSelect('stm-branch', String(staff.branch_id));
+
+  document.getElementById('stm-title').textContent = staff ? 'Edit Staff' : 'Add Staff';
+  document.getElementById('staff-modal').classList.add('open');
+}
+
+function editStaff(id) {
+  const s = allStaff.find(x => x.id === id);
+  if (s) openStaffModal(s);
+}
+
+async function saveStaff() {
+  const body = {
+    name:      document.getElementById('stm-name').value.trim(),
+    phone:     document.getElementById('stm-phone').value.trim(),
+    role:      document.getElementById('stm-role').value,
+    branch_id: document.getElementById('stm-branch').value || null,
+    status:    document.getElementById('stm-status').value,
+  };
+
+  const errs = [];
+  if (!body.name)  errs.push('Name');
+  if (!body.phone) errs.push('Phone');
+  if (!body.role)  errs.push('Role');
+  if (errs.length) { toast('Required: ' + errs.join(', '), 'err'); return; }
+
+  const url    = editingStaffId ? `/admin/api/settings/staff/${editingStaffId}` : '/admin/api/settings/staff';
+  const method = editingStaffId ? 'PUT' : 'POST';
+  const r = await api(url, { method, body: JSON.stringify(body) });
+  if (r.error) { toast(r.error, 'err'); return; }
+
+  toast(editingStaffId ? 'Staff updated' : 'Staff added', 'ok');
+  closeModal('staff-modal');
+  loadStaff();
+}
+
+async function deleteStaff(id) {
+  if (!confirm('Remove this staff member?')) return;
+  await api(`/admin/api/settings/staff/${id}`, { method: 'DELETE' });
+  toast('Staff removed', 'ok');
+  loadStaff();
+}
+
+// ── TIMINGS ───────────────────────────────────────────────────────────────────
+
+async function loadTimings() {
+  try {
+    const d = await api('/admin/api/settings/timings');
+    if (d.workday) {
+      document.getElementById('tm-workday-open').value  = d.workday.open_time;
+      document.getElementById('tm-workday-close').value = d.workday.close_time;
+    }
+    if (d.weekend) {
+      document.getElementById('tm-weekend-open').value  = d.weekend.open_time;
+      document.getElementById('tm-weekend-close').value = d.weekend.close_time;
+    }
+  } catch (e) {
+    toast('Could not load timings', 'err');
+  }
+}
+
+async function saveTimings() {
+  const body = {
+    workday: {
+      open_time:  document.getElementById('tm-workday-open').value,
+      close_time: document.getElementById('tm-workday-close').value,
+    },
+    weekend: {
+      open_time:  document.getElementById('tm-weekend-open').value,
+      close_time: document.getElementById('tm-weekend-close').value,
+    },
+  };
+
+  if (!body.workday.open_time || !body.workday.close_time ||
+      !body.weekend.open_time || !body.weekend.close_time) {
+    toast('Please fill in all time fields', 'err'); return;
+  }
+  if (body.workday.close_time <= body.workday.open_time) {
+    toast('Workday closing time must be after opening time', 'err'); return;
+  }
+  if (body.weekend.close_time <= body.weekend.open_time) {
+    toast('Weekend closing time must be after opening time', 'err'); return;
+  }
+
+  const r = await api('/admin/api/settings/timings', { method: 'PUT', body: JSON.stringify(body) });
+  if (r.ok) {
+    toast('Salon hours saved', 'ok');
+  } else {
+    toast(r.error || 'Error saving timings', 'err');
+  }
+}
+
+// ══════════════════════════════════════
 //  MODAL CLOSE ON OVERLAY CLICK
 // ══════════════════════════════════════
 document.querySelectorAll('.modal-overlay').forEach(o => {
@@ -476,6 +759,12 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
 //  INIT
 // ══════════════════════════════════════
 (async function init() {
+  // Load branches first so all selects can be populated immediately
+  try {
+    allBranches = await api('/admin/api/settings/branches');
+    populateBranchSelects();
+  } catch (e) { /* non-fatal */ }
+
   await Promise.all([loadBookings(true), loadServices()]);
   await loadStats();
 })();

@@ -397,3 +397,56 @@ tr:hover td { background: var(--mist); }
   background: var(--card); color: var(--text);
   margin-bottom: 12px;
 }
+
+/* ── SETTINGS SUB-TABS ── */
+.settings-tabs {
+  display: flex; gap: 4px;
+  margin-bottom: 22px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0;
+}
+.stab {
+  padding: 9px 20px; border: none;
+  background: transparent; cursor: pointer;
+  font-size: 0.82rem; font-weight: 600;
+  color: var(--sub); font-family: 'DM Sans', sans-serif;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px; border-radius: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+.stab:hover { color: var(--ink); }
+.stab.active { color: var(--rose); border-bottom-color: var(--rose); }
+
+.stab-panel { display: none; }
+.stab-panel.active { display: block; }
+
+/* ── TIMINGS CARD ── */
+.timings-card {
+  background: var(--card); border-radius: 12px;
+  border: 1.5px solid var(--border); padding: 28px;
+  max-width: 560px;
+}
+.timings-section { margin-bottom: 24px; }
+.timings-section h4 {
+  font-size: 0.9rem; font-weight: 600; color: var(--ink);
+  margin-bottom: 14px;
+}
+.timings-actions {
+  display: flex; justify-content: flex-end;
+  margin-top: 8px;
+}
+
+/* ── ROLE BADGE ── */
+.role-badge {
+  display: inline-block; padding: 3px 9px; border-radius: 20px;
+  font-size: 0.7rem; font-weight: 600;
+  background: var(--rose-lt); color: var(--rose);
+  text-transform: capitalize;
+}
+
+/* ── MAP LINK ── */
+.map-link {
+  color: var(--rose); text-decoration: none;
+  font-size: 0.78rem; font-weight: 600;
+}
+.map-link:hover { text-decoration: underline; }

@@ -1,6 +1,6 @@
-const { getSession, setSession, clearSession } = require('../core/session');
+const { setSession, clearSession } = require('../core/session');
 const { getDb } = require('../db/database');
-const { BRANCHES } = require('./branches');
+const { getBranches } = require('./branches');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,8 @@ function saveBooking(data, platform) {
 }
 
 function branchList() {
-  return BRANCHES.map(b => `  *${b.number}* — ${b.name}`).join('\n');
+  const branches = getBranches();
+  return branches.map(b => `  *${b.number}* — ${b.name}`).join('\n');
 }
 
 // Validates name: at least 2 words, only letters/spaces
@@ -47,7 +48,6 @@ function isValidPhone(text) {
 function isValidDate(text) {
   const t = text.trim().toLowerCase();
   if (t === 'tomorrow' || t === 'today') return true;
-  // "30 March", "March 30", "April 5 2026", "2026-04-05"
   return /^(\d{1,2}\s+\w+|\w+\s+\d{1,2})(\s+\d{4})?$/.test(t) ||
     /^\d{4}-\d{2}-\d{2}$/.test(t);
 }
@@ -56,6 +56,68 @@ function isValidDate(text) {
 function isValidTime(text) {
   return /^([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?$/i.test(text.trim()) ||
     /^([01]?\d|2[0-3])\s?(am|pm)$/i.test(text.trim());
+}
+
+// Parse user time input → "HH:MM" 24-hour string
+function parseTimeTo24h(text) {
+  const t = text.trim();
+  const match12 = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (match12) {
+    let h = parseInt(match12[1], 10);
+    const m = parseInt(match12[2] || '0', 10);
+    const period = match12[3].toLowerCase();
+    if (period === 'pm' && h !== 12) h += 12;
+    if (period === 'am' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+  const match24 = t.match(/^(\d{1,2}):(\d{2})$/);
+  if (match24) {
+    return `${String(parseInt(match24[1], 10)).padStart(2, '0')}:${match24[2]}`;
+  }
+  return null;
+}
+
+function toMinutes(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function formatTime12h(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+// Determines if a date string falls on a weekend (Sat/Sun)
+function isWeekendDate(dateStr) {
+  const t = dateStr.trim().toLowerCase();
+  let d;
+  if (t === 'today') {
+    d = new Date();
+  } else if (t === 'tomorrow') {
+    d = new Date();
+    d.setDate(d.getDate() + 1);
+  } else {
+    d = new Date(dateStr);
+    if (isNaN(d.getTime())) {
+      // Try "30 March" / "March 30" style with current year appended
+      d = new Date(dateStr + ' ' + new Date().getFullYear());
+    }
+  }
+  if (isNaN(d.getTime())) return false; // can't parse → treat as workday
+  const day = d.getDay();
+  return day === 0 || day === 6; // 0=Sun, 6=Sat
+}
+
+// Fetch the applicable timing row for a given date string
+function getSalonTiming(dateStr) {
+  try {
+    const dayType = isWeekendDate(dateStr) ? 'weekend' : 'workday';
+    return getDb().prepare('SELECT * FROM salon_timings WHERE day_type = ?').get(dayType);
+  } catch {
+    return null;
+  }
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -141,8 +203,9 @@ function handleBookingStep(userId, messageText, session, platform) {
 
   // ── STEP 5: Got branch → ask date ─────────────────────────────────────────
   if (session.state === 'ASK_BRANCH') {
+    const branches = getBranches();
     const branchNum = parseInt(text, 10);
-    const branch = BRANCHES.find(b => b.number === branchNum);
+    const branch = branches.find(b => b.number === branchNum);
     if (!branch) {
       return (
         '⚠️ Please reply with a valid branch *number*:\n\n' +
@@ -166,14 +229,21 @@ function handleBookingStep(userId, messageText, session, platform) {
       );
     }
     setSession(userId, { ...session, state: 'ASK_TIME', date: text });
+
+    // Show available hours for the selected date
+    const timing = getSalonTiming(text);
+    let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
+    if (timing) {
+      timeHint = `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n${timeHint}`;
+    }
+
     return (
       `📆 *${text}* — noted!\n\n` +
-      'What *time* works for you?\n\n' +
-      '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
+      `What *time* works for you?\n\n${timeHint}`
     );
   }
 
-  // ── STEP 7: Got time → save & confirm ─────────────────────────────────────
+  // ── STEP 7: Got time → validate & save ────────────────────────────────────
   if (session.state === 'ASK_TIME') {
     if (!isValidTime(text)) {
       return (
@@ -182,13 +252,32 @@ function handleBookingStep(userId, messageText, session, platform) {
       );
     }
 
+    // Validate time is within salon operating hours
+    const time24 = parseTimeTo24h(text);
+    if (time24) {
+      const timing = getSalonTiming(session.date);
+      if (timing) {
+        const requested = toMinutes(time24);
+        const open      = toMinutes(timing.open_time);
+        const close     = toMinutes(timing.close_time);
+        if (requested < open || requested > close) {
+          const label = timing.day_type === 'weekend' ? 'weekend' : 'weekday';
+          return (
+            `⚠️ That time is outside our ${label} hours.\n\n` +
+            `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n` +
+            'Please choose a time within that range.'
+          );
+        }
+      }
+    }
+
     const bookingData = {
-      name: session.name,
-      phone: session.phone,
+      name:    session.name,
+      phone:   session.phone,
       service: session.service,
-      branch: session.branch,
-      date: session.date,
-      time: text,
+      branch:  session.branch,
+      date:    session.date,
+      time:    text,
     };
 
     try {

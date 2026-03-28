@@ -310,6 +310,136 @@ app.get('/admin/api/clients', requireAdminAuth, (req, res) => {
   res.json(clients);
 });
 
+// ─── Settings: Branches ────────────────────────────────────────────────────────
+
+app.get('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
+  res.json(getDb().prepare('SELECT * FROM branches ORDER BY number ASC').all());
+});
+
+app.post('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
+  const { name, address, map_link, phone } = req.body;
+  const errs = [];
+  if (!name?.trim())    errs.push('name');
+  if (!address?.trim()) errs.push('address');
+  if (!map_link?.trim() || !map_link.trim().startsWith('http')) errs.push('map_link (must be a valid URL starting with http)');
+  if (!phone?.trim())   errs.push('phone');
+  if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
+
+  const db = getDb();
+  const maxNum = db.prepare('SELECT COALESCE(MAX(number), 0) as m FROM branches').get().m;
+  const r = db.prepare(
+    `INSERT INTO branches (number, name, address, map_link, phone) VALUES (?, ?, ?, ?, ?)`
+  ).run(maxNum + 1, name.trim(), address.trim(), map_link.trim(), phone.trim());
+  res.json(db.prepare('SELECT * FROM branches WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.put('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
+  const { name, address, map_link, phone } = req.body;
+  const errs = [];
+  if (!name?.trim())    errs.push('name');
+  if (!address?.trim()) errs.push('address');
+  if (!map_link?.trim() || !map_link.trim().startsWith('http')) errs.push('map_link');
+  if (!phone?.trim())   errs.push('phone');
+  if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
+
+  getDb().prepare(
+    `UPDATE branches SET name=?, address=?, map_link=?, phone=?, updated_at=datetime('now') WHERE id=?`
+  ).run(name.trim(), address.trim(), map_link.trim(), phone.trim(), req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
+  getDb().prepare('DELETE FROM branches WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Settings: Staff ───────────────────────────────────────────────────────────
+
+app.get('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
+  const staff = getDb().prepare(`
+    SELECT s.*, b.name as branch_name
+    FROM staff s
+    LEFT JOIN branches b ON s.branch_id = b.id
+    ORDER BY s.name ASC
+  `).all();
+  res.json(staff);
+});
+
+app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
+  const { name, phone, role, branch_id, status } = req.body;
+  const validRoles = ['stylist', 'receptionist', 'admin', 'manager'];
+  const errs = [];
+  if (!name?.trim())              errs.push('name');
+  if (!phone?.trim())             errs.push('phone');
+  if (!role || !validRoles.includes(role)) errs.push('role (stylist, receptionist, admin, manager)');
+  if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
+
+  const db = getDb();
+  const r = db.prepare(
+    `INSERT INTO staff (name, phone, role, branch_id, status) VALUES (?, ?, ?, ?, ?)`
+  ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active');
+  res.json(db.prepare('SELECT * FROM staff WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.put('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
+  const { name, phone, role, branch_id, status } = req.body;
+  const validRoles = ['stylist', 'receptionist', 'admin', 'manager'];
+  const errs = [];
+  if (!name?.trim())              errs.push('name');
+  if (!phone?.trim())             errs.push('phone');
+  if (!role || !validRoles.includes(role)) errs.push('role');
+  if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
+
+  getDb().prepare(
+    `UPDATE staff SET name=?, phone=?, role=?, branch_id=?, status=?, updated_at=datetime('now') WHERE id=?`
+  ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active', req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
+  getDb().prepare('DELETE FROM staff WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Settings: Salon Timings ───────────────────────────────────────────────────
+
+app.get('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
+  const rows = getDb().prepare('SELECT * FROM salon_timings').all();
+  const result = {};
+  rows.forEach(r => { result[r.day_type] = r; });
+  res.json(result);
+});
+
+app.put('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
+  const { workday, weekend } = req.body;
+  const timeRx = /^\d{2}:\d{2}$/;
+  const errs = [];
+  if (!workday?.open_time  || !timeRx.test(workday.open_time))  errs.push('workday.open_time');
+  if (!workday?.close_time || !timeRx.test(workday.close_time)) errs.push('workday.close_time');
+  if (!weekend?.open_time  || !timeRx.test(weekend.open_time))  errs.push('weekend.open_time');
+  if (!weekend?.close_time || !timeRx.test(weekend.close_time)) errs.push('weekend.close_time');
+  if (errs.length) return res.status(400).json({ error: `Invalid or missing fields: ${errs.join(', ')}` });
+  if (workday.close_time <= workday.open_time)
+    return res.status(400).json({ error: 'Workday closing time must be after opening time' });
+  if (weekend.close_time <= weekend.open_time)
+    return res.status(400).json({ error: 'Weekend closing time must be after opening time' });
+
+  const db = getDb();
+  const upsert = db.prepare(`
+    INSERT INTO salon_timings (day_type, open_time, close_time, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(day_type) DO UPDATE SET
+      open_time  = excluded.open_time,
+      close_time = excluded.close_time,
+      updated_at = excluded.updated_at
+  `);
+  db.transaction(() => {
+    upsert.run('workday', workday.open_time, workday.close_time);
+    upsert.run('weekend', weekend.open_time, weekend.close_time);
+  })();
+  res.json({ ok: true });
+});
+
 // ─── Seed db handling ───────────────────────────────────────────────────────────
 app.get("/run-seed", (req, res) => {
   if (req.query.key !== "adminkey123") return res.status(401).send("Unauthorized");

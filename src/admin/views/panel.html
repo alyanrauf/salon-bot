@@ -28,6 +28,7 @@
     <a onclick="showTab('packages',this)"><span class="ico">✨</span> Packages &amp; Prices</a>
     <a onclick="showTab('deals',this)"><span class="ico">🎁</span> Deals &amp; Offers</a>
     <a onclick="showTab('clients',this)"><span class="ico">👩</span> Clients</a>
+    <a onclick="showTab('settings',this)"><span class="ico">⚙️</span> Settings</a>
   </nav>
   <div class="sidebar-footer">
     <a href="/admin/logout">⬅ Logout</a>
@@ -166,8 +167,6 @@
       <select id="branch-filter" class="branch-select" onchange="renderServices()">
         <option value="">All Branches</option>
         <option value="All Branches">General</option>
-        <option value="Branch 1">Branch 1</option>
-        <option value="Branch 2">Branch 2</option>
       </select>
       <div class="pkg-grid" id="services-grid">
         <div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--sub)">
@@ -207,6 +206,94 @@
       </div>
     </div><!-- /tab-clients -->
 
+    <!-- ══ SETTINGS TAB ══ -->
+    <div class="tab-panel" id="tab-settings">
+
+      <!-- Sub-tab navigation -->
+      <div class="settings-tabs">
+        <button class="stab active" onclick="showSettingsTab('branches', this)">🏪 Branches</button>
+        <button class="stab" onclick="showSettingsTab('staff', this)">👥 Staff</button>
+        <button class="stab" onclick="showSettingsTab('timings', this)">🕐 Salon Hours</button>
+      </div>
+
+      <!-- Branches sub-tab -->
+      <div class="stab-panel active" id="stab-branches">
+        <div class="sec-header">
+          <h3>Branch Management</h3>
+          <button class="btn btn-primary btn-sm" onclick="openBranchModal()">+ Add Branch</button>
+        </div>
+        <div class="card-box">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Name</th><th>Address</th><th>Phone</th><th>Map Link</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="branches-tbody">
+              <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Staff sub-tab -->
+      <div class="stab-panel" id="stab-staff">
+        <div class="sec-header">
+          <h3>Staff Management</h3>
+          <button class="btn btn-primary btn-sm" onclick="openStaffModal()">+ Add Staff</button>
+        </div>
+        <div class="card-box">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th><th>Phone</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="staff-tbody">
+              <tr class="loading-row"><td colspan="6"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Timings sub-tab -->
+      <div class="stab-panel" id="stab-timings">
+        <div class="sec-header"><h3>Salon Operating Hours</h3></div>
+        <div class="timings-card">
+          <div class="timings-section">
+            <h4>🗓️ Workdays (Mon – Fri)</h4>
+            <div class="form-2col">
+              <div class="form-row">
+                <label>Opens At</label>
+                <input type="time" id="tm-workday-open" />
+              </div>
+              <div class="form-row">
+                <label>Closes At</label>
+                <input type="time" id="tm-workday-close" />
+              </div>
+            </div>
+          </div>
+          <div class="timings-section">
+            <h4>🏖️ Weekends (Sat – Sun)</h4>
+            <div class="form-2col">
+              <div class="form-row">
+                <label>Opens At</label>
+                <input type="time" id="tm-weekend-open" />
+              </div>
+              <div class="form-row">
+                <label>Closes At</label>
+                <input type="time" id="tm-weekend-close" />
+              </div>
+            </div>
+          </div>
+          <div class="timings-actions">
+            <button class="btn btn-primary" onclick="saveTimings()">Save Hours</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /tab-settings -->
+
   </div><!-- /content -->
 </main>
 
@@ -236,11 +323,7 @@
     <div class="form-2col">
       <div class="form-row">
         <label>Branch</label>
-        <select id="bm-branch">
-          <option>All Branches</option>
-          <option>Branch 1</option>
-          <option>Branch 2</option>
-        </select>
+        <select id="bm-branch"></select>
       </div>
       <div class="form-row">
         <label>Status</label>
@@ -292,11 +375,7 @@
       </div>
       <div class="form-row">
         <label>Branch</label>
-        <select id="sm-branch">
-          <option>All Branches</option>
-          <option>Branch 1</option>
-          <option>Branch 2</option>
-        </select>
+        <select id="sm-branch"></select>
       </div>
     </div>
     <div class="modal-actions">
@@ -329,6 +408,78 @@
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('deal-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveDeal()">Save Deal</button>
+    </div>
+  </div>
+</div>
+
+<!-- Branch Modal -->
+<div class="modal-overlay" id="branch-modal">
+  <div class="modal">
+    <h3 id="brm-title">Add Branch</h3>
+    <div class="form-row">
+      <label>Branch Name</label>
+      <input type="text" id="brm-name" placeholder="e.g. City Center Branch" />
+    </div>
+    <div class="form-row">
+      <label>Address</label>
+      <textarea id="brm-address" placeholder="e.g. 123 Main Street, City Center, Dubai"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Google Maps Link</label>
+      <input type="url" id="brm-maplink" placeholder="https://maps.google.com/…" />
+    </div>
+    <div class="form-row">
+      <label>Phone Number</label>
+      <input type="tel" id="brm-phone" placeholder="+971 50 000 0001" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('branch-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBranch()">Save Branch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Staff Modal -->
+<div class="modal-overlay" id="staff-modal">
+  <div class="modal">
+    <h3 id="stm-title">Add Staff</h3>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Full Name</label>
+        <input type="text" id="stm-name" placeholder="e.g. Sara Ahmed" />
+      </div>
+      <div class="form-row">
+        <label>Phone</label>
+        <input type="tel" id="stm-phone" placeholder="+971…" />
+      </div>
+    </div>
+    <div class="form-2col">
+      <div class="form-row">
+        <label>Role</label>
+        <select id="stm-role">
+          <option value="stylist">Stylist</option>
+          <option value="receptionist">Receptionist</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Status</label>
+        <select id="stm-status">
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Assigned Branch</label>
+      <select id="stm-branch">
+        <option value="">— None —</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('staff-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveStaff()">Save Staff</button>
     </div>
   </div>
 </div>
