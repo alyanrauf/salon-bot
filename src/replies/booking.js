@@ -25,7 +25,7 @@ function getActiveStaff(branchName) {
         ORDER BY s.name
       `).all(branch.id);
     }
-    return db.prepare(`SELECT id, name, role FROM staff WHERE status = 'active' ORDER BY name`).all();
+    return db.prepare(`SELECT id, name, role FROM staff WHERE status = 'active'  AND role NOT IN ('admin', 'manager', 'receptionist') ORDER BY name`).all();
   } catch {
     return [];
   }
