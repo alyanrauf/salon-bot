@@ -15,27 +15,48 @@ const FALLBACK_MESSAGE =
   'Our team is always happy to help!';
 
 async function routeMessage(userId, messageText, platform) {
-  // Check if user is mid-booking flow
   const session = getSession(userId);
+
+  // Step 1 — always detect intent first
+  const result = await detectIntent(messageText);
+  const intent = typeof result === 'object' ? result.intent : result;
+  const term = typeof result === 'object' ? result.term : null;
+
+  // Step 2 — handle cancellation at ANY time
+  if (intent === 'CANCEL') {
+    clearSession(userId);
+    return "✅ Your booking process has been cancelled. If you need anything else, I'm here to help!";
+  }
+
+  // Step 3 — If user is inside booking flow & not canceling → continue booking flow
   if (session && session.state && session.state.startsWith('ASK_')) {
     return handleBookingStep(userId, messageText, session, platform);
   }
 
-  const result = await detectIntent(messageText);
-
-  // result is either a plain string or { intent, term }
-  const intent = typeof result === 'object' ? result.intent : result;
-  const term = typeof result === 'object' ? result.term : null;
-
+  // Step 4 — Normal intent routing
   switch (intent) {
-    case 'PRICE': return getPricesReply();
-    case 'SERVICE_LIST': return getServiceListReply();
-    case 'SERVICE_DETAIL': return getServiceDetail(term);
-    case 'DEALS': return getDealsReply();
-    case 'BRANCH': return getBranchesReply();
-    case 'BOOKING': return handleBookingStep(userId, messageText, null, platform);
-    default: return FALLBACK_MESSAGE;
+    case 'PRICE':
+      return getPricesReply();
+
+    case 'SERVICE_LIST':
+      return getServiceListReply();
+
+    case 'SERVICE_DETAIL':
+      return getServiceDetail(term);
+
+    case 'DEALS':
+      return getDealsReply();
+
+    case 'BRANCH':
+      return getBranchesReply();
+
+    case 'BOOKING':
+      return handleBookingStep(userId, messageText, null, platform);
+
+    default:
+      return FALLBACK_MESSAGE;
   }
 }
+
 
 module.exports = { routeMessage };
