@@ -22,7 +22,7 @@
     '#salonbot-wrap{position:fixed;bottom:24px;right:24px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:14px}',
     '#salonbot-toggle{width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;background:' + primaryColor + ';color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(0,0,0,.25);transition:transform .2s}',
     '#salonbot-toggle:hover{transform:scale(1.08)}',
-    '#salonbot-window{display:none;flex-direction:column;position:absolute;bottom:68px;right:0;width:320px;max-height:480px;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);background:#fff}',
+    '#salonbot-window{display:none;flex-direction:column;position:absolute;bottom:68px;right:0;width:370px;height:480px;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);background:#fff}',
     '#salonbot-window.open{display:flex}',
     '#salonbot-header{background:' + primaryColor + ';color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:15px}',
     '#salonbot-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0}',
