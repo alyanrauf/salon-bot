@@ -1,5 +1,5 @@
 const { detectIntent } = require('./intent');
-const { getSession, setSession, clearSession } = require('./session');
+const { getSession, setSession, clearSession, isSessionExpired } = require('./session');
 const { getPricesReply, getServiceDetail, getServiceListReply } = require('../replies/prices');
 const { getDealsReply } = require('../replies/deals');
 const { getBranchesReply } = require('../replies/branches');
@@ -15,7 +15,13 @@ const FALLBACK_MESSAGE =
   'Our team is always happy to help!';
 
 async function routeMessage(userId, messageText, platform) {
-  const session = getSession(userId);
+  let session = getSession(userId);
+
+  if (session && isSessionExpired(session, 5)) {
+    clearSession(userId);
+    session = null;
+    return "⏰ Your booking session has expired due to inactivity. Let me know if you want to start again!";
+  }
 
   // Step 1 — always detect intent first
   const result = await detectIntent(messageText);
