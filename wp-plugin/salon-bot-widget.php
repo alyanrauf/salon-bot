@@ -42,13 +42,14 @@ function salonbot_inject_widget() {
 
     echo "\n<!-- Salon Bot Widget -->\n";
     echo '<style>
-        #salonbot-root, .salonbot-widget, [id^="salonbot"], [class^="salonbot"] {
-            position: fixed !important;
-            bottom: 20px !important;
-            right: 20px !important;
-            top: auto !important;
-            z-index: 999999 !important;
-        }
+        #salonbot-wrap {
+    position: fixed !important;
+    bottom: 24px !important;
+    right: 24px !important;
+    top: auto !important;
+    left: auto !important;
+    z-index: 2147483647 !important;
+}
     </style>' . "\n";
 
     echo '<script src="' . $script_src . '"'
