@@ -50,6 +50,14 @@ function salonbot_inject_widget() {
     left: auto !important;
     z-index: 2147483647 !important;
 }
+        #salonbot-wrap img,
+        #salonbot-wrap img.emoji {
+    height: 1em !important;
+    width: auto !important;
+    max-height: 1.2em !important;
+    vertical-align: middle !important;
+    display: inline-block !important;
+}
     </style>' . "\n";
 
     echo '<script src="' . $script_src . '"'

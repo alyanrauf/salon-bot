@@ -4,6 +4,27 @@
 
 ---
 
+## What Changed and Why (2026-03-30)
+
+### Emoji Sizing Fix (widget.js + wp-plugin)
+
+**Problem:** Emojis in the greeting and all chat messages appeared ~7× taller than surrounding text. Two root causes:
+
+1. `#salonbot-messages` declared `font-size:14px` without `!important`, allowing WordPress theme CSS to override it and produce a large inherited font-size for child elements.
+2. No `<img>` size constraint inside `.sb-msg` — WordPress's `twemoji` script replaces Unicode emoji with `<img class="emoji">` tags; without a scoped override those images could render at a theme-controlled `1em` that is far larger than 14px.
+
+**Fix in `public/widget.js`:**
+
+- Added `!important` to `font-size:14px` on `#salonbot-messages`
+- Added new CSS rule: `.sb-msg img{height:1.2em!important;width:auto!important;vertical-align:middle!important;display:inline-block!important}` — constrains any `<img>` inside a message bubble (including twemoji replacements) to 1.2 × 14px ≈ 17px, inline with the text.
+
+**Fix in `wp-plugin/salon-bot-widget.php`:**
+
+- Added scoped override inside the existing `<style>` block: `#salonbot-wrap img, #salonbot-wrap img.emoji { height:1em!important; width:auto!important; max-height:1.2em!important; vertical-align:middle!important; display:inline-block!important; }`
+- Selector specificity (1,1,1) beats WordPress's global `img.emoji` rule (0,1,1), ensuring `1em` is always evaluated against the widget's 14px context, not the theme's font-size.
+
+---
+
 ## What Changed and Why (2026-03-28)
 
 ### Real-Time Time Availability Validation
