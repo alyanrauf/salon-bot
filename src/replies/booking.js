@@ -65,36 +65,44 @@ function branchList() {
   return branches.map(b => `  *${b.number}* — ${b.name}`).join('\n');
 }
 
+// Extract the actual name from conversational speech like "mera naam Ahmad hai" → "Ahmad"
+function extractName(text) {
+  const t = text.trim();
+  // Strip common Urdu/English lead-in phrases
+  const cleaned = t
+    .replace(/^(mera naam|my name is|i am|main|میرا نام|naam hai|naam)\s+/i, '')
+    .replace(/\s+(hai|hoon|hun|he|is|bolraha hoon|bol raha hoon|hain)$/i, '')
+    .trim();
+  return cleaned || t;
+}
+
 // Validates name: accepts Latin, Urdu/Arabic Unicode, spaces — 2–60 chars
 function isValidName(text) {
-  const t = text.trim();
+  const t = extractName(text.trim());
   if (t.length < 2 || t.length > 60) return false;
   // Allow Latin letters, Urdu/Arabic script (U+0600–U+06FF, U+0750–U+077F, U+FB50–U+FDFF, U+FE70–U+FEFF), spaces
   return /^[a-zA-Z؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿\s]+$/.test(t);
 }
 
-// Validates phone: 7–15 digits, optional leading +
-function isValidPhone(text) {
-  return /^\+?[0-9\s\-]{7,15}$/.test(text.trim());
+// Extract digits from conversational speech like "mera number 03001234567 hai"
+function extractPhone(text) {
+  const t = text.trim();
+  // Strip lead-in phrases
+  const cleaned = t
+    .replace(/^(mera number|my number|number hai|number|phone|contact|میرا نمبر|نمبر)\s*/i, '')
+    .replace(/\s*(hai|hoon|he|is|hain)$/i, '')
+    .trim();
+  // Extract only digits and leading +
+  const digits = cleaned.replace(/[^\d+]/g, '');
+  return digits || cleaned;
 }
 
-// Add this function near the other date helpers
-function resolveDate(text) {
-  const t = text.trim().toLowerCase();
-  const today = new Date();
-  if (t === 'aaj' || t === 'today') {
-    // no change
-  } else if (t === 'kal' || t === 'tomorrow') {
-    today.setDate(today.getDate() + 1);
-  } else if (t === 'parson' || t === 'day after tomorrow') {
-    today.setDate(today.getDate() + 2);
-  } else {
-    // Already a real date string — return as-is
-    return text;
-  }
-  // Format as YYYY-MM-DD
-  return today.toISOString().split('T')[0];
+// Validates phone: 7–15 digits, optional leading +
+function isValidPhone(text) {
+  const t = extractPhone(text.trim());
+  return /^\+?[0-9]{7,15}$/.test(t);
 }
+
 // Validates date: accepts "30 March", "April 5", "2026-04-05", "tomorrow", "kal", "parson", "aaj"
 function isValidDate(text) {
   const t = text.trim().toLowerCase();
@@ -214,8 +222,9 @@ function handleBookingStep(userId, text, session, platform) {
     if (!isValidName(text)) {
       return '⚠️ Please enter your *full name* (letters only).';
     }
-    setSession(userId, { ...session, state: 'ASK_PHONE', name: text.trim() });
-    return `👋 Hi *${text.trim()}*!\n\nWhat's your *phone number*?`;
+    const cleanName = extractName(text.trim());
+    setSession(userId, { ...session, state: 'ASK_PHONE', name: cleanName });
+    return `👋 Hi *${cleanName}*!\n\nWhat's your *phone number*?`;
   }
 
   // ── STEP 3: Got phone → ask service ───────────────────────────────────────
@@ -228,7 +237,7 @@ function handleBookingStep(userId, text, session, platform) {
       clearSession(userId);
       return 'Sorry, no services are available right now. Please contact us directly.';
     }
-    setSession(userId, { ...session, state: 'ASK_SERVICE', phone: text.trim() });
+    setSession(userId, { ...session, state: 'ASK_SERVICE', phone: extractPhone(text.trim()) });
     return (
       '✅ Got it!\n\nWhich *service* would you like?\n\n' +
       services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n') +
@@ -267,7 +276,7 @@ function handleBookingStep(userId, text, session, platform) {
   // ── STEP 5: Got branch → ask staff (or skip to date) ──────────────────────
   if (session.state === 'ASK_BRANCH') {
     const branches = getBranches();
-    const branchNum = parseInt(text.replace(/\D/g, ''), 10);
+    const branchNum = parseInt(text, 10);
     const lower = text.trim().toLowerCase();
     // Accept branch by number OR by name/partial name (for voice users who say the name)
     let branch = branches.find(b => b.number === branchNum);
@@ -339,7 +348,7 @@ function handleBookingStep(userId, text, session, platform) {
         '_e.g. 30 March · April 5 · tomorrow · 2026-04-05_'
       );
     }
-    setSession(userId, { ...session, state: 'ASK_TIME', date: resolveDate(text) });
+    setSession(userId, { ...session, state: 'ASK_TIME', date: text });
 
     const timing = getSalonTiming(text);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
@@ -403,7 +412,7 @@ function handleBookingStep(userId, text, session, platform) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: parseTimeTo24h(text) || text,
+      time: text,
       staffId: session.staffId || null,
       staffName: session.staffName || null,
     };
