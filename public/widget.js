@@ -25,6 +25,8 @@
     '#salonbot-window{display:none;flex-direction:column;position:absolute;bottom:68px;right:0;width:370px;height:480px;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);background:#fff}',
     '#salonbot-window.open{display:flex}',
     '#salonbot-header{background:' + primaryColor + ';color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:15px}',
+    '#salonbot-call{background:none;border:none;color:white;font-size:20px;cursor:pointer;padding:4px;line-height:1;}',
+    '#salonbot-call:hover{opacity:.8;}',
     '#salonbot-close{background:none;border:none;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0}',
     '#salonbot-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;min-height:80px;font-size:14px!important}',
     '.sb-msg{max-width:80%;padding:8px 12px;border-radius:12px;font-size:14px!important;line-height:1.45;word-break:break-word;white-space:pre-wrap}',
@@ -51,6 +53,7 @@
     '<div id="salonbot-window" role="dialog" aria-label="' + botName + ' chat">',
     '  <div id="salonbot-header">',
     '    <span>' + botName + '</span>',
+    '<button id="salonbot-call" aria-label="Voice Call">📞</button>',
     '    <button id="salonbot-close" aria-label="Close">✕</button>',
     '  </div>',
     '  <div id="salonbot-messages"></div>',
@@ -97,6 +100,105 @@
     input.disabled = on;
   }
 
+  //  GEMINI-VOICE-CALL MODAL
+
+  function startVoiceCallModal() {
+    var modal = document.createElement('div');
+    modal.id = "salonbot-call-modal";
+    modal.style.cssText = `
+    position:fixed; inset:0; background:rgba(0,0,0,.7);
+    display:flex; justify-content:center; align-items:center;
+    z-index:2147483647;
+  `;
+
+    modal.innerHTML = `
+    <div style="background:#fff; padding:30px; border-radius:20px; width:340px; text-align:center;">
+      <h2 style="margin-bottom:10px;">Voice Call</h2>
+      <p id="call-status">Connecting...</p>
+      <button id="call-end" style="margin-top:20px;padding:10px 20px;background:red;color:#fff;border:none;border-radius:10px;">End Call</button>
+    </div>
+  `;
+
+    document.body.appendChild(modal);
+
+    document.getElementById("call-end").onclick = function () {
+      modal.remove();
+      // also close WebSocket if active etc.
+    };
+
+    // Start the Gemini live call
+    startVoiceCall();
+  }
+
+
+  // ── Gemini Voice Call ───────────────────────────────────────────────────────
+  function startVoiceCall() {
+    const ws = new WebSocket(
+      baseUrl.replace("https", "wss").replace("http", "ws") + "/api/call"
+    );
+
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+      document.getElementById("call-status").textContent = "Connected";
+      startMicrophone(ws);
+    };
+
+    // Receive model audio
+    ws.onmessage = e => {
+      if (typeof e.data !== "string") {
+        playPCM16(e.data);
+      } else {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "text") {
+          console.log("TRANSCRIPTION:", msg.text);
+        }
+      }
+    };
+
+    ws.onclose = () => {
+      document.getElementById("call-status").textContent = "Call Ended";
+    };
+
+    window._VOICE_WS = ws;
+  }
+
+  // ── Microphone capture and sending to Gemini ─────────────────────────────
+  async function startMicrophone(ws) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const src = ctx.createMediaStreamSource(stream);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = e => {
+      const float = e.inputBuffer.getChannelData(0);
+      const pcm = new Int16Array(float.length);
+      for (let i = 0; i < float.length; i++)
+        pcm[i] = float[i] * 32767;
+      ws.send(pcm);
+    };
+
+    src.connect(processor);
+    processor.connect(ctx.destination);
+  }
+
+  // ── Play PCM16 audio from Gemini ─────────────────────────────────────────
+  function playPCM16(buffer) {
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const int16 = new Int16Array(buffer);
+    const float = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++)
+      float[i] = int16[i] / 32768;
+
+    const audioBuffer = ctx.createBuffer(1, float.length, 16000);
+    audioBuffer.getChannelData(0).set(float);
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+    source.start();
+  }
+  
   // ── Open / close ───────────────────────────────────────────────────────────
   function open() {
     opened = true;
@@ -115,6 +217,13 @@
   }
 
   toggleBtn.addEventListener('click', function () { opened ? close() : open(); });
+
+  var callBtn = document.getElementById('salonbot-call');
+  callBtn.addEventListener('click', function () {
+    // TODO: trigger your call UI
+    startVoiceCallModal();
+  })
+
   closeBtn.addEventListener('click', close);
 
   // ── Send message ───────────────────────────────────────────────────────────

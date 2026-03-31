@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path');
 const logger = require('./utils/logger');
 const { getDb, invalidateSettingsCache } = require('./db/database');
+const { setupCallServer } = require('./server/apiCall.js');
 
 // Platform handlers
 const { handleWhatsApp, verifyWhatsApp } = require('./handlers/whatsapp');
@@ -554,8 +555,21 @@ app.get("/run-seed", (req, res) => {
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+// app.listen(PORT, () => {
+//   logger.info(`Salon Bot server running on port ${PORT}`);
+//   // Initialize DB on startup
+//   getDb();
+// });
+
+// ─── Start server (with HTTP wrapper for WebSockets) ──────────────────────────
+const http = require('http');
+const server = http.createServer(app);
+
+// Attach Gemini Voice Call WebSocket server
+
+setupCallServer(server);
+
+server.listen(PORT, () => {
   logger.info(`Salon Bot server running on port ${PORT}`);
-  // Initialize DB on startup
   getDb();
 });
