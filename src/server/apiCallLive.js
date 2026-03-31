@@ -50,11 +50,10 @@ function setupCallServer(server) {
 
                     systemInstruction: `
 You are a live voice receptionist for a beauty salon.
-- Greet callers warmly and keep responses brief and natural for voice.
-- Help with: service prices, available deals, branch locations, and booking appointments.
-- To handle any of these requests, ALWAYS use the salon_intent tool — do not answer from memory.
+- When the caller's first message is "__GREET__", immediately greet them warmly without using a tool. Example: "Assalamu Alaikum! Beauty Salon mein khush aamdeed. Main aap ki kya madad kar sakti hoon?" Adjust language (Urdu/English) based on caller.
+- For all real requests: help with service prices, deals, branch locations, and bookings. ALWAYS use the salon_intent tool — do not answer from memory.
 - If booking: collect name, phone, service, branch, date, and time step by step.
-- Speak in Urdu or English based on the caller's language.
+- Keep responses brief and natural for voice.
 - If unsure, ask a clarifying question rather than guessing.
 `,
 
@@ -106,6 +105,7 @@ You are a live voice receptionist for a beauty salon.
 
                         if (message.serverContent?.interrupted) {
                             console.log('[call] Gemini interrupted (barge-in)');
+                            if (!sessionClosed) ws.send(JSON.stringify({ type: 'interrupted' }));
                         }
 
                         // Tool call handling
@@ -149,11 +149,32 @@ You are a live voice receptionist for a beauty salon.
                 },
             });
 
-            // Browser PCM16 audio → Gemini
+            // Browser messages: binary = PCM16 mic audio; text JSON = control messages
             // NOTE: must use { audio: { data, mimeType } } — NOT { media: { ... } }
             // Using 'media' silently sends nothing; the correct key is 'audio'.
             ws.on('message', (data) => {
                 if (sessionClosed) return;
+
+                // JSON control messages (e.g. { type: 'greet' })
+                if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
+                    try {
+                        const msg = JSON.parse(data.toString());
+                        if (msg.type === 'greet') {
+                            // Trigger the agent to greet the caller first
+                            console.log('[call] Sending greeting trigger to Gemini');
+                            session.sendClientContent({
+                                turns: [{
+                                    role: 'user',
+                                    parts: [{ text: '__GREET__' }],
+                                }],
+                                turnComplete: true,
+                            });
+                        }
+                    } catch (_) { /* not JSON, ignore */ }
+                    return;
+                }
+
+                // Binary = raw PCM16 mic audio
                 try {
                     session.sendRealtimeInput({
                         audio: {

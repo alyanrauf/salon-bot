@@ -102,7 +102,71 @@
   }
 
   // ── Voice Call State ───────────────────────────────────────────────────────
-  // FIX: all call state kept in one object so cleanup is reliable and complete.
+  // ── Tone synthesiser (dial/connect/end beeps) ──────────────────────────────
+  var toneCtx = null;
+  function getToneCtx() {
+    if (!toneCtx || toneCtx.state === 'closed') toneCtx = new AudioContext();
+    return toneCtx;
+  }
+
+  // Repeating 425 Hz dial beep: 0.4s on / 0.6s off — like WhatsApp ringing
+  var dialInterval = null;
+  function startDialTone() {
+    stopDialTone();
+    function beep() {
+      var ctx = getToneCtx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.frequency.value = 425;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.38);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    }
+    beep();
+    dialInterval = setInterval(beep, 1000);
+  }
+  function stopDialTone() {
+    if (dialInterval) { clearInterval(dialInterval); dialInterval = null; }
+  }
+
+  // Connected jingle: two rising tones (600 Hz then 900 Hz)
+  function playConnectedSound() {
+    stopDialTone();
+    var ctx = getToneCtx();
+    [600, 900].forEach(function (freq, i) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.22, ctx.currentTime + i * 0.14);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + i * 0.14 + 0.13);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.14);
+      osc.stop(ctx.currentTime + i * 0.14 + 0.15);
+    });
+  }
+
+  // Ended tone: two falling tones (800 Hz then 500 Hz)
+  function playEndedSound() {
+    stopDialTone();
+    var ctx = getToneCtx();
+    [800, 500].forEach(function (freq, i) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.22, ctx.currentTime + i * 0.15);
+      gain.gain.linearRampToValueAtTime(0, ctx.currentTime + i * 0.15 + 0.14);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.15);
+      osc.stop(ctx.currentTime + i * 0.15 + 0.16);
+    });
+  }
+
+  // All call state kept in one object so cleanup is reliable and complete.
   var call = {
     ws: null,
     stream: null,       // MediaStream (microphone)
@@ -118,6 +182,7 @@
   // Previously "End Call" only removed the modal — mic + WS kept running.
   function teardownCall() {
     console.log('[call] teardownCall()');
+    stopDialTone();
     if (call.processor) { try { call.processor.disconnect(); } catch (_) { } call.processor = null; }
     if (call.src) { try { call.src.disconnect(); } catch (_) { } call.src = null; }
     if (call.stream) {
@@ -170,19 +235,34 @@
     startVoiceCall(modal);
   }
 
+  // ── Voice Call Logic (WebSocket + Web Audio) ───────────────────────────────
+
+  function clearPlayback() {
+    call.playbackQueue = [];
+    call.isPlaying = false;
+    if (call.playbackCtx) {
+      try { call.playbackCtx.close(); } catch (_) { }
+      call.playbackCtx = null;
+    }
+  }
+  
   // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
   function startVoiceCall(modal) {
     var wsUrl = baseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call';
     console.log('[call] startVoiceCall() connecting to', wsUrl);
 
+    startDialTone();
     var ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     call.ws = ws;
 
     ws.onopen = function () {
       console.log('[call] websocket onopen');
+      playConnectedSound();
       setCallStatus('Connected 🟢');
       startMicrophone(ws);
+      // Ask server to send the greeting trigger to Gemini
+      ws.send(JSON.stringify({ type: 'greet' }));
     };
 
     ws.onmessage = function (e) {
@@ -196,6 +276,9 @@
         try {
           var msg = JSON.parse(e.data);
           console.log('[call] websocket text message:', msg);
+          if (msg.type === 'interrupted') {
+            clearPlayback();
+          }
           if (msg.type === 'text') {
             console.log('[call] Transcript:', msg.text);
           }
@@ -211,6 +294,7 @@
     };
 
     ws.onclose = function () {
+      playEndedSound();
       setCallStatus('Call ended');
       teardownCall();
     };
@@ -257,8 +341,14 @@
         call.ws.send(pcm.buffer);
       };
 
+      // ScriptProcessorNode must be connected to destination to fire onaudioprocess,
+      // but we route through a silent gain so the mic audio is NOT audible locally
+      // (avoids the feedback/echo distortion).
+      var silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
       src.connect(processor);
-      processor.connect(ctx.destination);
+      processor.connect(silentGain);
+      silentGain.connect(ctx.destination);
     } catch (err) {
       console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
