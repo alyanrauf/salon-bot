@@ -73,6 +73,7 @@
   var form = document.getElementById('salonbot-form');
   var input = document.getElementById('salonbot-input');
   var sendBtn = document.getElementById('salonbot-send');
+  var callBtn = document.getElementById('salonbot-call');
 
   var opened = false;
 
@@ -100,106 +101,171 @@
     input.disabled = on;
   }
 
-  //  GEMINI-VOICE-CALL MODAL
+  // ── Voice Call State ───────────────────────────────────────────────────────
+  // FIX: all call state kept in one object so cleanup is reliable and complete.
+  var call = {
+    ws: null,
+    stream: null,       // MediaStream (microphone)
+    audioCtx: null,     // Single AudioContext reused for the whole call
+    processor: null,    // ScriptProcessorNode
+    src: null,          // MediaStreamSource
+    playbackCtx: null,  // Separate AudioContext for playback
+  };
 
+  // FIX: teardown closes WS, stops mic, and closes both AudioContexts.
+  // Previously "End Call" only removed the modal — mic + WS kept running.
+  function teardownCall() {
+    if (call.processor) { try { call.processor.disconnect(); } catch (_) { } call.processor = null; }
+    if (call.src) { try { call.src.disconnect(); } catch (_) { } call.src = null; }
+    if (call.stream) {
+      call.stream.getTracks().forEach(function (t) { t.stop(); });
+      call.stream = null;
+    }
+    if (call.audioCtx) { try { call.audioCtx.close(); } catch (_) { } call.audioCtx = null; }
+    if (call.playbackCtx) { try { call.playbackCtx.close(); } catch (_) { } call.playbackCtx = null; }
+    if (call.ws) {
+      try { call.ws.close(); } catch (_) { }
+      call.ws = null;
+    }
+  }
+
+  // ── Voice Call Modal ───────────────────────────────────────────────────────
   function startVoiceCallModal() {
-    var modal = document.createElement('div');
-    modal.id = "salonbot-call-modal";
-    modal.style.cssText = `
-    position:fixed; inset:0; background:rgba(0,0,0,.7);
-    display:flex; justify-content:center; align-items:center;
-    z-index:2147483647;
-  `;
+    // Prevent duplicate modals
+    var existing = document.getElementById('salonbot-call-modal');
+    if (existing) return;
 
-    modal.innerHTML = `
-    <div style="background:#fff; padding:30px; border-radius:20px; width:340px; text-align:center;">
-      <h2 style="margin-bottom:10px;">Voice Call</h2>
-      <p id="call-status">Connecting...</p>
-      <button id="call-end" style="margin-top:20px;padding:10px 20px;background:red;color:#fff;border:none;border-radius:10px;">End Call</button>
-    </div>
-  `;
+    var modal = document.createElement('div');
+    modal.id = 'salonbot-call-modal';
+    modal.style.cssText =
+      'position:fixed;inset:0;background:rgba(0,0,0,.7);' +
+      'display:flex;justify-content:center;align-items:center;z-index:2147483647;';
+
+    modal.innerHTML =
+      '<div style="background:#fff;padding:30px;border-radius:20px;width:340px;text-align:center;">' +
+      '<div style="font-size:48px;margin-bottom:12px;">📞</div>' +
+      '<h2 style="margin-bottom:10px;">Voice Call</h2>' +
+      '<p id="call-status" style="color:#666;margin-bottom:20px;">Connecting...</p>' +
+      '<button id="call-end" style="padding:10px 28px;background:#e74c3c;color:#fff;border:none;border-radius:10px;font-size:15px;cursor:pointer;">End Call</button>' +
+      '</div>';
 
     document.body.appendChild(modal);
 
-    document.getElementById("call-end").onclick = function () {
+    document.getElementById('call-end').onclick = function () {
+      teardownCall();       // FIX: properly closes WS + mic + AudioContexts
       modal.remove();
-      // also close WebSocket if active etc.
     };
 
-    // Start the Gemini live call
-    startVoiceCall();
+    startVoiceCall(modal);
   }
 
+  // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
+  function startVoiceCall(modal) {
+    var wsUrl = baseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call';
 
-  // ── Gemini Voice Call ───────────────────────────────────────────────────────
-  function startVoiceCall() {
-    const ws = new WebSocket(
-      baseUrl.replace("https", "wss").replace("http", "ws") + "/api/call"
-    );
+    var ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    call.ws = ws;
 
-    ws.binaryType = "arraybuffer";
-
-    ws.onopen = () => {
-      document.getElementById("call-status").textContent = "Connected";
+    ws.onopen = function () {
+      setCallStatus('Connected 🟢');
       startMicrophone(ws);
     };
 
-    // Receive model audio
-    ws.onmessage = e => {
-      if (typeof e.data !== "string") {
+    ws.onmessage = function (e) {
+      if (typeof e.data !== 'string') {
+        // Binary = PCM16 audio from Gemini
         playPCM16(e.data);
       } else {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "text") {
-          console.log("TRANSCRIPTION:", msg.text);
-        }
+        try {
+          var msg = JSON.parse(e.data);
+          if (msg.type === 'text') {
+            console.log('[call] Transcript:', msg.text);
+          }
+        } catch (_) { }
       }
     };
 
-    ws.onclose = () => {
-      document.getElementById("call-status").textContent = "Call Ended";
+    ws.onerror = function (err) {
+      console.error('[call] WebSocket error', err);
+      setCallStatus('Connection error ❌');
     };
 
-    window._VOICE_WS = ws;
+    ws.onclose = function () {
+      setCallStatus('Call ended');
+      teardownCall();
+    };
   }
 
-  // ── Microphone capture and sending to Gemini ─────────────────────────────
+  function setCallStatus(text) {
+    var el = document.getElementById('call-status');
+    if (el) el.textContent = text;
+  }
+
+  // ── Microphone capture → Gemini ────────────────────────────────────────────
+  // FIX: stores stream, audioCtx, src, processor on `call` object for cleanup.
   async function startMicrophone(ws) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const ctx = new AudioContext({ sampleRate: 16000 });
-    const src = ctx.createMediaStreamSource(stream);
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      call.stream = stream;
 
-    processor.onaudioprocess = e => {
-      const float = e.inputBuffer.getChannelData(0);
-      const pcm = new Int16Array(float.length);
-      for (let i = 0; i < float.length; i++)
-        pcm[i] = float[i] * 32767;
-      ws.send(pcm);
-    };
+      // FIX: ONE AudioContext for capturing, reused for the full call
+      var ctx = new AudioContext({ sampleRate: 16000 });
+      call.audioCtx = ctx;
 
-    src.connect(processor);
-    processor.connect(ctx.destination);
+      var src = ctx.createMediaStreamSource(stream);
+      call.src = src;
+
+      // NOTE: ScriptProcessor is deprecated but has broadest browser support.
+      // Upgrade path: use AudioWorkletNode (requires a separate worklet JS file).
+      var processor = ctx.createScriptProcessor(4096, 1, 1);
+      call.processor = processor;
+
+      processor.onaudioprocess = function (e) {
+        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) return;
+        var float = e.inputBuffer.getChannelData(0);
+        var pcm = new Int16Array(float.length);
+        for (var i = 0; i < float.length; i++) {
+          pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32767));
+        }
+        call.ws.send(pcm.buffer);
+      };
+
+      src.connect(processor);
+      processor.connect(ctx.destination);
+    } catch (err) {
+      console.error('[call] Microphone error:', err);
+      setCallStatus('Mic access denied ❌');
+    }
   }
 
-  // ── Play PCM16 audio from Gemini ─────────────────────────────────────────
+  // ── Play PCM16 audio from Gemini ───────────────────────────────────────────
+  // FIX: was creating a new AudioContext() on every audio chunk.
+  // Browsers cap concurrent AudioContexts (~6). After a few seconds of audio
+  // chunks, playback would fail and trigger console errors.
+  // Now lazily creates ONE playback context and reuses it.
   function playPCM16(buffer) {
-    const ctx = new AudioContext({ sampleRate: 16000 });
-    const int16 = new Int16Array(buffer);
-    const float = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++)
-      float[i] = int16[i] / 32768;
+    if (!call.playbackCtx) {
+      call.playbackCtx = new AudioContext({ sampleRate: 24000 });
+    }
+    var ctx = call.playbackCtx;
 
-    const audioBuffer = ctx.createBuffer(1, float.length, 16000);
+    var int16 = new Int16Array(buffer);
+    var float = new Float32Array(int16.length);
+    for (var i = 0; i < int16.length; i++) {
+      float[i] = int16[i] / 32768;
+    }
+
+    var audioBuffer = ctx.createBuffer(1, float.length, 24000);
     audioBuffer.getChannelData(0).set(float);
 
-    const source = ctx.createBufferSource();
+    var source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
     source.start();
   }
-  
-  // ── Open / close ───────────────────────────────────────────────────────────
+
+  // ── Open / close chat ──────────────────────────────────────────────────────
   function open() {
     opened = true;
     chatWin.classList.add('open');
@@ -217,13 +283,7 @@
   }
 
   toggleBtn.addEventListener('click', function () { opened ? close() : open(); });
-
-  var callBtn = document.getElementById('salonbot-call');
-  callBtn.addEventListener('click', function () {
-    // TODO: trigger your call UI
-    startVoiceCallModal();
-  })
-
+  callBtn.addEventListener('click', startVoiceCallModal);
   closeBtn.addEventListener('click', close);
 
   // ── Send message ───────────────────────────────────────────────────────────
@@ -246,7 +306,7 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         messages.removeChild(typing);
-        appendMsg(data.reply || 'Sorry, I couldn\'t respond. Please try again.', 'bot');
+        appendMsg(data.reply || "Sorry, I couldn't respond. Please try again.", 'bot');
       })
       .catch(function () {
         messages.removeChild(typing);
@@ -258,11 +318,11 @@
       });
   });
 
-  // Enter sends (but Shift+Enter is not relevant since it's a single-line input)
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       form.dispatchEvent(new Event('submit'));
     }
   });
+
 })();

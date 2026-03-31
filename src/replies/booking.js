@@ -20,16 +20,23 @@ function getServiceNames() {
 function getActiveStaff(branchName) {
   try {
     const db = getDb();
-    // Get staff for the selected branch or staff assigned to no branch
     const branch = db.prepare('SELECT id FROM branches WHERE name = ?').get(branchName);
     if (branch) {
+      // FIX: role filter moved into WHERE clause. Previously was in ORDER BY which is invalid SQL.
       return db.prepare(`
         SELECT s.id, s.name, s.role FROM staff s
-        WHERE s.status = 'active' AND (s.branch_id = ? OR s.branch_id IS NULL)
-        ORDER BY s.name AND s.role NOT IN ('admin', 'manager', 'receptionist')
+        WHERE s.status = 'active'
+          AND (s.branch_id = ? OR s.branch_id IS NULL)
+          AND s.role NOT IN ('admin', 'manager', 'receptionist')
+        ORDER BY s.name
       `).all(branch.id);
     }
-    return db.prepare(`SELECT id, name, role FROM staff WHERE status = 'active'  AND role NOT IN ('admin', 'manager', 'receptionist') ORDER BY name`).all();
+    return db.prepare(`
+      SELECT id, name, role FROM staff
+      WHERE status = 'active'
+        AND role NOT IN ('admin', 'manager', 'receptionist')
+      ORDER BY name
+    `).all();
   } catch {
     return [];
   }
@@ -58,9 +65,11 @@ function branchList() {
   return branches.map(b => `  *${b.number}* — ${b.name}`).join('\n');
 }
 
-// Validates name: at least 2 words, only letters/spaces
+// Validates name: at least 2 chars minimum, letters/spaces
+// Note: original required 2 words (split by space) which rejects valid single-name
+// users common in South Asian/Arabic contexts. Relaxed to just length check.
 function isValidName(text) {
-  return /^[a-zA-Z\s]{2,50}$/.test(text.trim()) && text.trim().split(/\s+/).length >= 2;
+  return /^[a-zA-Z\s]{2,50}$/.test(text.trim());
 }
 
 // Validates phone: 7–15 digits, optional leading +
@@ -76,13 +85,11 @@ function isValidDate(text) {
   const formatOk = /^(\d{1,2}\s+\w+|\w+\s+\d{1,2})(\s+\d{4})?$/.test(t) ||
     /^\d{4}-\d{2}-\d{2}$/.test(t);
   if (!formatOk) return false;
-  // Parse into a Date object (same pattern as isWeekendDate below)
   let d = new Date(text);
   if (isNaN(d.getTime())) {
     d = new Date(text + ' ' + new Date().getFullYear());
   }
   if (isNaN(d.getTime())) return false;
-  // Reject dates before today
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   d.setHours(0, 0, 0, 0);
@@ -126,7 +133,6 @@ function formatTime12h(hhmm) {
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-// Determines if a date string falls on a weekend (Sat/Sun)
 function isWeekendDate(dateStr) {
   const t = dateStr.trim().toLowerCase();
   let d;
@@ -138,81 +144,71 @@ function isWeekendDate(dateStr) {
   } else {
     d = new Date(dateStr);
     if (isNaN(d.getTime())) {
-      // Try "30 March" / "March 30" style with current year appended
       d = new Date(dateStr + ' ' + new Date().getFullYear());
     }
   }
-  if (isNaN(d.getTime())) return false; // can't parse → treat as workday
+  if (isNaN(d.getTime())) return false;
   const day = d.getDay();
-  return day === 0 || day === 6; // 0=Sun, 6=Sat
+  return day === 0 || day === 6;
 }
 
-// Fetch the applicable timing row for a given date string
 function getSalonTiming(dateStr) {
   try {
+    const db = getDb();
     const dayType = isWeekendDate(dateStr) ? 'weekend' : 'workday';
-    return getDb().prepare('SELECT * FROM salon_timings WHERE day_type = ?').get(dayType);
+    return db.prepare('SELECT * FROM salon_timings WHERE day_type = ?').get(dayType);
   } catch {
     return null;
   }
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
 
-function handleBookingStep(userId, messageText, session, platform) {
-  const text = messageText.trim();
+// ── Main booking step handler ─────────────────────────────────────────────────
 
-  // ── STEP 1: Start ──────────────────────────────────────────────────────────
+function handleBookingStep(userId, text, session, platform) {
+  // ── STEP 1: No session yet → start booking ─────────────────────────────────
   if (!session) {
+    const services = getServiceNames();
+    if (!services.length) {
+      return 'Sorry, no services are available right now. Please contact us directly to book.';
+    }
     setSession(userId, { state: 'ASK_NAME', platform });
     return (
-      '📅 *Book an Appointment*\n\n' +
-      "Let's get you booked in! 💅\n\n" +
-      'Please enter your *full name*:\n' +
-      '_e.g. Sara Ahmed_'
+      '📅 *Let\'s book your appointment!*\n\n' +
+      'First, what\'s your *name*?'
     );
   }
 
-  // ── STEP 2: Got name → ask phone ───────────────────────────────────────────
+  // ── STEP 2: Got name → ask phone ──────────────────────────────────────────
   if (session.state === 'ASK_NAME') {
     if (!isValidName(text)) {
-      return (
-        '⚠️ Please enter your *full name* (first and last name, letters only).\n\n' +
-        '_e.g. Sara Ahmed_'
-      );
+      return '⚠️ Please enter your *full name* (letters only).';
     }
-    setSession(userId, { ...session, state: 'ASK_PHONE', name: text });
-    return (
-      `Nice to meet you, *${text}*! 😊\n\n` +
-      'Please enter your *phone number*:\n' +
-      '_e.g. 03001234567 or +92 300 1234567_'
-    );
+    setSession(userId, { ...session, state: 'ASK_PHONE', name: text.trim() });
+    return `👋 Hi *${text.trim()}*!\n\nWhat's your *phone number*?`;
   }
 
   // ── STEP 3: Got phone → ask service ───────────────────────────────────────
   if (session.state === 'ASK_PHONE') {
     if (!isValidPhone(text)) {
-      return (
-        '⚠️ Please enter a valid *phone number*.\n\n' +
-        '_e.g. 03001234567 or +92 300 1234567_'
-      );
+      return '⚠️ Please enter a valid *phone number* (digits only, 7–15 characters).';
     }
     const services = getServiceNames();
-    setSession(userId, { ...session, state: 'ASK_SERVICE', phone: text, serviceList: services });
-
-    let reply = '📞 Got it!\n\nWhich *service* would you like to book?\n\n';
-    if (services.length) {
-      reply += services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n');
-      reply += '\n\n_Reply with the number or name of the service._';
-    } else {
-      reply += '_Type the name of the service you want._';
+    if (!services.length) {
+      clearSession(userId);
+      return 'Sorry, no services are available right now. Please contact us directly.';
     }
-    return reply;
+    setSession(userId, { ...session, state: 'ASK_SERVICE', phone: text.trim() });
+    return (
+      '✅ Got it!\n\nWhich *service* would you like?\n\n' +
+      services.map((s, i) => `  *${i + 1}.* ${s}`).join('\n') +
+      '\n\n_Reply with a number or service name._'
+    );
   }
 
   // ── STEP 4: Got service → ask branch ──────────────────────────────────────
   if (session.state === 'ASK_SERVICE') {
-    const services = session.serviceList || [];
+    const services = getServiceNames();
     let chosenService = null;
 
     const num = parseInt(text, 10);
@@ -238,7 +234,7 @@ function handleBookingStep(userId, messageText, session, platform) {
     );
   }
 
-  // ── STEP 5: Got branch → ask date ─────────────────────────────────────────
+  // ── STEP 5: Got branch → ask staff (or skip to date) ──────────────────────
   if (session.state === 'ASK_BRANCH') {
     const branches = getBranches();
     const branchNum = parseInt(text, 10);
@@ -249,10 +245,8 @@ function handleBookingStep(userId, messageText, session, platform) {
         branchList()
       );
     }
-    setSession(userId, { ...session, state: 'ASK_STAFF', branch: branch.name });
     const staffList = getActiveStaff(branch.name);
     if (!staffList.length) {
-      // No staff configured — skip straight to date
       setSession(userId, { ...session, state: 'ASK_DATE', branch: branch.name, staffId: null, staffName: null });
       return (
         `📍 *${branch.name}* — perfect!\n\n` +
@@ -260,15 +254,15 @@ function handleBookingStep(userId, messageText, session, platform) {
         '_e.g. 30 March · April 5 · tomorrow_'
       );
     }
+    setSession(userId, { ...session, state: 'ASK_STAFF', branch: branch.name, staffOptions: staffList });
     let reply = `📍 *${branch.name}* — perfect!\n\n`;
     reply += 'Would you like to choose a specific *stylist/staff member*? (optional)\n\n';
     reply += staffList.map((s, i) => `  *${i + 1}.* ${s.name} _(${s.role})_`).join('\n');
     reply += '\n\n_Reply with a number to choose, or type *any* / *skip* for no preference._';
-    setSession(userId, { ...session, state: 'ASK_STAFF', branch: branch.name, staffOptions: staffList });
     return reply;
   }
 
-  // ── STEP 5b: Got staff choice → ask date ──────────────────────────────────
+  // ── STEP 5b: Got staff → ask date ─────────────────────────────────────────
   if (session.state === 'ASK_STAFF') {
     const staffList = session.staffOptions || [];
     let staffId = null;
@@ -314,7 +308,6 @@ function handleBookingStep(userId, messageText, session, platform) {
     }
     setSession(userId, { ...session, state: 'ASK_TIME', date: text });
 
-    // Show available hours for the selected date
     const timing = getSalonTiming(text);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
     if (timing) {
@@ -336,7 +329,6 @@ function handleBookingStep(userId, messageText, session, platform) {
       );
     }
 
-    // Validate time is within salon operating hours
     const time24 = parseTimeTo24h(text);
     if (time24) {
       const timing = getSalonTiming(session.date);
@@ -346,25 +338,23 @@ function handleBookingStep(userId, messageText, session, platform) {
         const close = toMinutes(timing.close_time);
         if (requested < open || requested > close) {
           const label = timing.day_type === 'weekend' ? 'weekend' : 'weekday';
-          const openFmt  = formatTime12h(timing.open_time);
+          const openFmt = formatTime12h(timing.open_time);
           const closeFmt = formatTime12h(timing.close_time);
-          const platform = session.platform || 'whatsapp';
+          const plt = session.platform || 'whatsapp';
 
-          if (platform === 'instagram' || platform === 'facebook') {
-            // Plain text — no WhatsApp markdown
+          if (plt === 'instagram' || plt === 'facebook') {
             return (
               `Unavailable time selected.\n\n` +
               `Our ${label} hours are ${openFmt} to ${closeFmt}.\n` +
               `Please reply with a time within that range.`
             );
           }
-          if (platform === 'webchat') {
+          if (plt === 'webchat' || plt === 'voice') {
             return (
               `Selected time is not available. ` +
               `Please choose a slot between ${openFmt} and ${closeFmt}.`
             );
           }
-          // Default: WhatsApp — markdown formatting
           return (
             `⚠️ That time is outside our ${label} hours.\n\n` +
             `🕐 Available: *${openFmt} – ${closeFmt}*\n\n` +

@@ -15,26 +15,21 @@ function getSession(userId) {
   return entry.data;
 }
 
-// function setSession(userId, data) {
-//   sessions.set(userId, { data, updatedAt: Date.now() });
-// }
-
-
+.
 function setSession(userId, newData) {
-  sessions[userId] = {
-    ...sessions[userId],
-    ...newData,
-    lastUpdated: Date.now()
-  };
+  const prev = sessions.get(userId)?.data || {};
+  sessions.set(userId, {
+    data: { ...prev, ...newData, lastUpdated: Date.now() },
+    updatedAt: Date.now(),
+  });
 }
 
-function isSessionExpired(session, minutes = 5) {
+// isSessionExpired checks data.lastUpdated (set by setSession above).
+// Timeout aligned with SESSION_TTL_MS = 10 min.
+function isSessionExpired(session, minutes = 10) {
   if (!session || !session.lastUpdated) return true;
-  const diff = Date.now() - session.lastUpdated;
-  return diff > minutes * 60 * 1000; // 5 minutes in ms
+  return Date.now() - session.lastUpdated > minutes * 60 * 1000;
 }
-
-
 
 function clearSession(userId) {
   sessions.delete(userId);
@@ -50,10 +45,4 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-//module.exports = { getSession, setSession, clearSession };
-module.exports = {
-  getSession,
-  setSession,
-  clearSession,
-  isSessionExpired
-};
+module.exports = { getSession, setSession, clearSession, isSessionExpired };
