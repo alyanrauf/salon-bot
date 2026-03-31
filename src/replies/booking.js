@@ -78,6 +78,23 @@ function isValidPhone(text) {
   return /^\+?[0-9\s\-]{7,15}$/.test(text.trim());
 }
 
+// Add this function near the other date helpers
+function resolveDate(text) {
+  const t = text.trim().toLowerCase();
+  const today = new Date();
+  if (t === 'aaj' || t === 'today') {
+    // no change
+  } else if (t === 'kal' || t === 'tomorrow') {
+    today.setDate(today.getDate() + 1);
+  } else if (t === 'parson' || t === 'day after tomorrow') {
+    today.setDate(today.getDate() + 2);
+  } else {
+    // Already a real date string — return as-is
+    return text;
+  }
+  // Format as YYYY-MM-DD
+  return today.toISOString().split('T')[0];
+}
 // Validates date: accepts "30 March", "April 5", "2026-04-05", "tomorrow", "kal", "parson", "aaj"
 function isValidDate(text) {
   const t = text.trim().toLowerCase();
@@ -322,7 +339,7 @@ function handleBookingStep(userId, text, session, platform) {
         '_e.g. 30 March · April 5 · tomorrow · 2026-04-05_'
       );
     }
-    setSession(userId, { ...session, state: 'ASK_TIME', date: text });
+    setSession(userId, { ...session, state: 'ASK_TIME', date: resolveDate(text) });
 
     const timing = getSalonTiming(text);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
@@ -386,7 +403,7 @@ function handleBookingStep(userId, text, session, platform) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: text,
+      time: parseTimeTo24h(text) || text, ,
       staffId: session.staffId || null,
       staffName: session.staffName || null,
     };
