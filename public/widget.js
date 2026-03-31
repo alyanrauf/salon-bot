@@ -152,7 +152,7 @@
     document.body.appendChild(modal);
 
     document.getElementById('call-end').onclick = function () {
-      teardownCall();       // FIX: properly closes WS + mic + AudioContexts
+      teardownCall();
       modal.remove();
     };
 
@@ -240,26 +240,32 @@
   }
 
   // ── Play PCM16 audio from Gemini ───────────────────────────────────────────
-  // FIX: was creating a new AudioContext() on every audio chunk.
-  // Browsers cap concurrent AudioContexts (~6). After a few seconds of audio
-  // chunks, playback would fail and trigger console errors.
-  // Now lazily creates ONE playback context and reuses it.
-  function playPCM16(buffer) {
-    if (!call.playbackCtx) {
-      call.playbackCtx = new AudioContext({ sampleRate: 24000 });
-    }
-    var ctx = call.playbackCtx;
 
-    var int16 = new Int16Array(buffer);
-    var float = new Float32Array(int16.length);
-    for (var i = 0; i < int16.length; i++) {
+  let playbackCtx = null;
+
+  function playPCM16(buffer) {
+    // ✅ Gemini outputs 16kHz PCM16
+    const sampleRate = 16000;
+
+    if (!playbackCtx) {
+      playbackCtx = new AudioContext({ sampleRate });
+    }
+
+    const ctx = playbackCtx;
+
+    // Convert Int16 -> Float32
+    const int16 = new Int16Array(buffer);
+    const float = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
       float[i] = int16[i] / 32768;
     }
 
-    var audioBuffer = ctx.createBuffer(1, float.length, 24000);
+    // Create audio buffer
+    const audioBuffer = ctx.createBuffer(1, float.length, sampleRate);
     audioBuffer.getChannelData(0).set(float);
 
-    var source = ctx.createBufferSource();
+    // Play it
+    const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
     source.start();
