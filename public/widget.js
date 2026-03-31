@@ -117,9 +117,11 @@
   // FIX: teardown closes WS, stops mic, and closes both AudioContexts.
   // Previously "End Call" only removed the modal — mic + WS kept running.
   function teardownCall() {
+    console.log('[call] teardownCall()');
     if (call.processor) { try { call.processor.disconnect(); } catch (_) { } call.processor = null; }
     if (call.src) { try { call.src.disconnect(); } catch (_) { } call.src = null; }
     if (call.stream) {
+      console.log('[call] stopping local microphone stream');
       call.stream.getTracks().forEach(function (t) { t.stop(); });
       call.stream = null;
     }
@@ -128,6 +130,7 @@
     call.playbackQueue = [];
     call.isPlaying = false;
     if (call.ws) {
+      console.log('[call] closing websocket');
       try { call.ws.close(); } catch (_) { }
       call.ws = null;
     }
@@ -135,9 +138,13 @@
 
   // ── Voice Call Modal ───────────────────────────────────────────────────────
   function startVoiceCallModal() {
+    console.log('[call] startVoiceCallModal()');
     // Prevent duplicate modals
     var existing = document.getElementById('salonbot-call-modal');
-    if (existing) return;
+    if (existing) {
+      console.log('[call] call modal already open');
+      return;
+    }
 
     var modal = document.createElement('div');
     modal.id = 'salonbot-call-modal';
@@ -166,27 +173,35 @@
   // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
   function startVoiceCall(modal) {
     var wsUrl = baseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call';
+    console.log('[call] startVoiceCall() connecting to', wsUrl);
 
     var ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     call.ws = ws;
 
     ws.onopen = function () {
+      console.log('[call] websocket onopen');
       setCallStatus('Connected 🟢');
       startMicrophone(ws);
     };
 
     ws.onmessage = function (e) {
+      console.log('[call] websocket onmessage, type:', typeof e.data);
       if (typeof e.data !== 'string') {
         // Binary = PCM16 audio from Gemini
-        playPCM16(e.data);
+        console.log('[call] websocket audio chunk received:', e.data.byteLength || '(unknown bytes)');
+        call.playbackQueue.push(e.data);
+        processPlaybackQueue();
       } else {
         try {
           var msg = JSON.parse(e.data);
+          console.log('[call] websocket text message:', msg);
           if (msg.type === 'text') {
             console.log('[call] Transcript:', msg.text);
           }
-        } catch (_) { }
+        } catch (err) {
+          console.error('[call] websocket text parse error', err, 'data:', e.data);
+        }
       }
     };
 
@@ -209,12 +224,15 @@
   // ── Microphone capture → Gemini ────────────────────────────────────────────
   // FIX: stores stream, audioCtx, src, processor on `call` object for cleanup.
   async function startMicrophone(ws) {
+    console.log('[call] startMicrophone()');
     try {
       var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[call] getUserMedia success', stream);
       call.stream = stream;
 
       // FIX: ONE AudioContext for capturing, reused for the full call
       var ctx = new AudioContext({ sampleRate: 16000 });
+      console.log('[call] created audio context', ctx);
       call.audioCtx = ctx;
 
       var src = ctx.createMediaStreamSource(stream);
@@ -226,12 +244,16 @@
       call.processor = processor;
 
       processor.onaudioprocess = function (e) {
-        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) return;
+        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) {
+          console.warn('[call] onaudioprocess: websocket not open, skipping send');
+          return;
+        }
         var float = e.inputBuffer.getChannelData(0);
         var pcm = new Int16Array(float.length);
         for (var i = 0; i < float.length; i++) {
           pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32767));
         }
+        console.log('[call] sending audio frame, samples:', pcm.length, 'bytes:', pcm.buffer.byteLength);
         call.ws.send(pcm.buffer);
       };
 
@@ -245,16 +267,23 @@
 
   // ── Play PCM16 audio from Gemini ───────────────────────────────────────────
 
+  function processPlaybackQueue() {
+    if (call.isPlaying || call.playbackQueue.length === 0) return;
+    call.isPlaying = true;
+    console.log('[call] processPlaybackQueue: next item, queue length', call.playbackQueue.length);
+    playPCM16(call.playbackQueue.shift());
+  }
 
   function playPCM16(buffer) {
+    console.log('[call] playPCM16() -- received audio chunk', buffer.byteLength || '(unknown bytes)');
     // ✅ Gemini outputs 16kHz PCM16
     const sampleRate = 16000;
 
     if (!call.playbackCtx) {
-      playbackCtx = new AudioContext({ sampleRate });
+      call.playbackCtx = new AudioContext({ sampleRate });
     }
 
-    const ctx = playbackCtx;
+    const ctx = call.playbackCtx;
 
     // Convert Int16 -> Float32
     const int16 = new Int16Array(buffer);
@@ -271,6 +300,11 @@
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    source.onended = function () {
+      console.log('[call] playPCM16 playback ended');
+      call.isPlaying = false;
+      processPlaybackQueue();
+    };
     source.start();
   }
 
