@@ -3,7 +3,7 @@ const express = require('express');
 const path = require('path');
 const logger = require('./utils/logger');
 const { getDb, invalidateSettingsCache } = require('./db/database');
-const { setupCallServer } = require('./server/apiCall');
+const { setupCallServer } = require("./server/apiCAll.js");
 
 // Platform handlers
 const { handleWhatsApp, verifyWhatsApp } = require('./handlers/whatsapp');

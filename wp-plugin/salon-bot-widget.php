@@ -33,37 +33,43 @@ add_action( 'wp_footer', 'salonbot_inject_widget' );
 function salonbot_inject_widget() {
     if ( salonbot_get('enabled') !== '1' ) return;
 
-    $url = trailingslashit( esc_url( salonbot_get('server_url') ) );
-    if ( empty( $url ) || $url === '/' ) return;
-
-    $script_src    = esc_url( $url . 'widget.js' );
+    $server_url    = trailingslashit( esc_url( salonbot_get('server_url') ) );
     $bot_name      = esc_attr( salonbot_get('bot_name') );
     $primary_color = esc_attr( salonbot_get('primary_color') );
 
+    if ( empty($server_url) || $server_url === '/' ) return;
+
+    // Script source served by your Node server
+    $script_src = $server_url . 'widget.js';
+
     echo "\n<!-- Salon Bot Widget -->\n";
+
+    // Fix emoji / font display (same as you already did)
     echo '<style>
         #salonbot-wrap {
-    position: fixed !important;
-    bottom: 24px !important;
-    right: 24px !important;
-    top: auto !important;
-    left: auto !important;
-    z-index: 2147483647 !important;
-}
+            position: fixed !important;
+            bottom: 24px !important;
+            right: 24px !important;
+            z-index: 2147483647 !important;
+        }
         #salonbot-wrap img,
         #salonbot-wrap img.emoji {
-    height: 1em !important;
-    width: auto !important;
-    max-height: 1.2em !important;
-    vertical-align: middle !important;
-    display: inline-block !important;
-}
+            height: 1em !important;
+            width: auto !important;
+            max-height: 1.2em !important;
+            vertical-align: middle !important;
+            display: inline-block !important;
+        }
     </style>' . "\n";
 
-    echo '<script src="' . $script_src . '"'
-       . ' data-bot-name="' . $bot_name . '"'
-       . ' data-primary-color="' . $primary_color . '"'
-       . ' defer></script>' . "\n";
+    // ✅ NO `defer`
+    // ✅ Inject backend URL, bot name, color
+    echo '<script 
+        src="' . $script_src . '"
+        data-backend-url="' . $server_url . '"
+        data-bot-name="' . $bot_name . '"
+        data-primary-color="' . $primary_color . '"
+    ></script>' . "\n";
 }
 
 // ─── Admin menu ───────────────────────────────────────────────────────────────

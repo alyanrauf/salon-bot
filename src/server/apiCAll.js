@@ -1,5 +1,3 @@
-
-
 const { WebSocketServer } = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
 const { routeMessage } = require('../core/router');
