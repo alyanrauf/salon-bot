@@ -110,6 +110,8 @@
     processor: null,    // ScriptProcessorNode
     src: null,          // MediaStreamSource
     playbackCtx: null,  // Separate AudioContext for playback
+    playbackQueue: [],
+    isPlaying: false,
   };
 
   // FIX: teardown closes WS, stops mic, and closes both AudioContexts.
@@ -123,6 +125,8 @@
     }
     if (call.audioCtx) { try { call.audioCtx.close(); } catch (_) { } call.audioCtx = null; }
     if (call.playbackCtx) { try { call.playbackCtx.close(); } catch (_) { } call.playbackCtx = null; }
+    call.playbackQueue = [];
+    call.isPlaying = false;
     if (call.ws) {
       try { call.ws.close(); } catch (_) { }
       call.ws = null;
@@ -241,13 +245,12 @@
 
   // ── Play PCM16 audio from Gemini ───────────────────────────────────────────
 
-  let playbackCtx = null;
 
   function playPCM16(buffer) {
     // ✅ Gemini outputs 16kHz PCM16
     const sampleRate = 16000;
 
-    if (!playbackCtx) {
+    if (!call.playbackCtx) {
       playbackCtx = new AudioContext({ sampleRate });
     }
 

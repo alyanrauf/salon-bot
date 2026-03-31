@@ -40,7 +40,7 @@ function setupCallServer(server) {
 
         try {
             const session = await client.live.connect({
-                model: 'gemini-2.5-flash-native-audio-dialog',
+                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
 
                 config: {
                     responseModalities: [Modality.AUDIO],
