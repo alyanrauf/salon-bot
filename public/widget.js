@@ -235,8 +235,6 @@
     startVoiceCall(modal);
   }
 
-  // ── Voice Call Logic (WebSocket + Web Audio) ───────────────────────────────
-
   function clearPlayback() {
     call.playbackQueue = [];
     call.isPlaying = false;
@@ -245,7 +243,7 @@
       call.playbackCtx = null;
     }
   }
-  
+
   // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
   function startVoiceCall(modal) {
     var wsUrl = baseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call';
@@ -306,49 +304,58 @@
   }
 
   // ── Microphone capture → Gemini ────────────────────────────────────────────
-  // FIX: stores stream, audioCtx, src, processor on `call` object for cleanup.
+  // Uses AudioWorklet (128-sample chunks at 16kHz) for clean, low-latency capture.
+  // AudioWorklet code is injected as a Blob URL — no separate file needed.
   async function startMicrophone(ws) {
     console.log('[call] startMicrophone()');
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+      });
       console.log('[call] getUserMedia success', stream);
       call.stream = stream;
 
-      // FIX: ONE AudioContext for capturing, reused for the full call
       var ctx = new AudioContext({ sampleRate: 16000 });
-      console.log('[call] created audio context', ctx);
       call.audioCtx = ctx;
+
+      // Inject worklet as a Blob so we don't need a separate .js file on the server
+      var workletCode = [
+        'class PcmCapture extends AudioWorkletProcessor {',
+        '  process(inputs) {',
+        '    var ch = inputs[0][0];',
+        '    if (ch && ch.length) {',
+        '      var pcm = new Int16Array(ch.length);',
+        '      for (var i = 0; i < ch.length; i++) {',
+        '        pcm[i] = Math.max(-32768, Math.min(32767, ch[i] * 32767));',
+        '      }',
+        '      this.port.postMessage(pcm.buffer, [pcm.buffer]);',
+        '    }',
+        '    return true;',
+        '  }',
+        '}',
+        'registerProcessor("pcm-capture", PcmCapture);'
+      ].join('\n');
+
+      var blob = new Blob([workletCode], { type: 'application/javascript' });
+      var blobUrl = URL.createObjectURL(blob);
+
+      await ctx.audioWorklet.addModule(blobUrl);
+      URL.revokeObjectURL(blobUrl);
 
       var src = ctx.createMediaStreamSource(stream);
       call.src = src;
 
-      // NOTE: ScriptProcessor is deprecated but has broadest browser support.
-      // Upgrade path: use AudioWorkletNode (requires a separate worklet JS file).
-      var processor = ctx.createScriptProcessor(4096, 1, 1);
-      call.processor = processor;
+      var worklet = new AudioWorkletNode(ctx, 'pcm-capture');
+      call.processor = worklet;
 
-      processor.onaudioprocess = function (e) {
-        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) {
-          console.warn('[call] onaudioprocess: websocket not open, skipping send');
-          return;
-        }
-        var float = e.inputBuffer.getChannelData(0);
-        var pcm = new Int16Array(float.length);
-        for (var i = 0; i < float.length; i++) {
-          pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32767));
-        }
-        console.log('[call] sending audio frame, samples:', pcm.length, 'bytes:', pcm.buffer.byteLength);
-        call.ws.send(pcm.buffer);
+      worklet.port.onmessage = function (e) {
+        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) return;
+        call.ws.send(e.data);
       };
 
-      // ScriptProcessorNode must be connected to destination to fire onaudioprocess,
-      // but we route through a silent gain so the mic audio is NOT audible locally
-      // (avoids the feedback/echo distortion).
-      var silentGain = ctx.createGain();
-      silentGain.gain.value = 0;
-      src.connect(processor);
-      processor.connect(silentGain);
-      silentGain.connect(ctx.destination);
+      src.connect(worklet);
+      // AudioWorkletNode does NOT need to connect to destination — no local playback of mic
+      worklet.connect(ctx.destination); // required by some browsers to keep graph alive; silent output
     } catch (err) {
       console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
