@@ -276,11 +276,11 @@
 
   function playPCM16(buffer) {
     console.log('[call] playPCM16() -- received audio chunk', buffer.byteLength || '(unknown bytes)');
-    // ✅ Gemini outputs 16kHz PCM16
-    const sampleRate = 16000;
+    // Gemini Live API outputs 24kHz PCM16 (input is 16kHz, output is 24kHz — asymmetric)
+    const sampleRate = 24000;
 
     if (!call.playbackCtx) {
-      call.playbackCtx = new AudioContext({ sampleRate });
+      call.playbackCtx = new AudioContext({ sampleRate: 24000 });
     }
 
     const ctx = call.playbackCtx;

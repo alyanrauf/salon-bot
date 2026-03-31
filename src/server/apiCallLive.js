@@ -40,7 +40,7 @@ function setupCallServer(server) {
 
         try {
             const session = await client.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                model: 'gemini-2.5-flash-native-audio-preview-12-2025',
 
                 config: {
                     responseModalities: [Modality.AUDIO],
@@ -150,11 +150,13 @@ You are a live voice receptionist for a beauty salon.
             });
 
             // Browser PCM16 audio → Gemini
+            // NOTE: must use { audio: { data, mimeType } } — NOT { media: { ... } }
+            // Using 'media' silently sends nothing; the correct key is 'audio'.
             ws.on('message', (data) => {
                 if (sessionClosed) return;
                 try {
                     session.sendRealtimeInput({
-                        media: {
+                        audio: {
                             data: Buffer.from(data).toString('base64'),
                             mimeType: 'audio/pcm;rate=16000',
                         },
