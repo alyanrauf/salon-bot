@@ -15,7 +15,7 @@ function getSession(userId) {
   return entry.data;
 }
 
-.
+
 function setSession(userId, newData) {
   const prev = sessions.get(userId)?.data || {};
   sessions.set(userId, {
