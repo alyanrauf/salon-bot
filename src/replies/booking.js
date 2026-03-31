@@ -403,7 +403,7 @@ function handleBookingStep(userId, text, session, platform) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: parseTimeTo24h(text) || text, ,
+      time: parseTimeTo24h(text) || text,
       staffId: session.staffId || null,
       staffName: session.staffName || null,
     };
