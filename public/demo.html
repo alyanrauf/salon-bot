@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Salon Assistant</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(145deg, #fdf0f7 0%, #f0e8fb 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: #6b3057;
+    }
+
+    .logo {
+      font-size: 56px;
+      line-height: 1;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    p {
+      font-size: 1rem;
+      color: #9b5e80;
+      margin-top: 4px;
+    }
+
+    .hint {
+      margin-top: 24px;
+      font-size: 0.85rem;
+      color: #b07898;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.45; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="logo">💅</div>
+  <h1>Salon Assistant</h1>
+  <p>Your personal beauty booking assistant</p>
+  <div class="hint">👇 Chat or call us — bottom right</div>
+
+  <!-- Widget loaded from same server — baseUrl auto-detected from script src -->
+  <script
+    src="/widget.js"
+    data-bot-name="Salon Assistant"
+    data-primary-color="#8b4a6b">
+  </script>
+
+  <script>
+    // Auto-open the chat panel as soon as the widget renders
+    (function tryOpen() {
+      var btn = document.getElementById('salonbot-toggle');
+      if (btn) { btn.click(); }
+      else { setTimeout(tryOpen, 100); }
+    })();
+  </script>
+
+</body>
+</html>
