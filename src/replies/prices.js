@@ -19,10 +19,9 @@ function getPricesReply() {
 
     let reply = '💅 *Our Services & Prices*\n\n';
     for (const [branch, items] of Object.entries(branches)) {
-      //make branch name bold and add location pin emoji
       reply += `📍 *${branch}*\n`;
       for (const item of items) {
-        reply += `  • *${item.name}*\n    ${item.price}\n`;
+        reply += `  • *${item.name}* — ${item.price}\n`;
       }
       reply += '\n';
     }

@@ -51,7 +51,6 @@ async function handleVoiceTool(name, args) {
         if (!brRow) brRow = db.prepare("SELECT id, name FROM branches WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(branchName);
         if (!brRow) return 'Branch not found.';
 
-        console.log('[get_staff] branch arg:', JSON.stringify(branchName), '→ resolved:', JSON.stringify(brRow));
         const staff = db.prepare(`
             SELECT s.id, s.name, r.name as role
             FROM staff s
@@ -60,7 +59,6 @@ async function handleVoiceTool(name, args) {
               AND (r.name IS NULL OR LOWER(r.name) NOT IN ('admin', 'receptionist', 'manager'))
             ORDER BY s.name
         `).all(brRow.id);
-        console.log('[get_staff] staff rows found:', staff.length, staff.map(s => s.name));
 
         if (!staff.length) return 'NO_STAFF';
         return staff.map(s => `${s.name} (${s.role || 'Stylist'})`).join(', ');
@@ -162,7 +160,6 @@ function setupCallServer(server) {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: {
                         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-                        languageCodes: ['ur-PK', 'en-US'],
                     },
                     realtimeInputConfig: {
                         automaticActivityDetection: {
@@ -177,22 +174,18 @@ function setupCallServer(server) {
                     },
 
                     systemInstruction: `
-You are a live voice receptionist for a beauty salon.
+You are a live voice receptionist for a beauty salon. You speak ONLY in pure Urdu or English — never Hindi.
 
-LANGUAGE — THIS IS YOUR MOST IMPORTANT RULE:
-- You ONLY speak two languages: Urdu and English. Nothing else.
-- DEFAULT language is English. Start in English unless the caller speaks Urdu first.
-- If the caller speaks Urdu → switch to Urdu with some words of english for elloquence immediately and stay in Urdu for the entire call.
-- If the caller speaks English → respond in English for the entire call.
-- NEVER mix languages mid-sentence.
-- NEVER use Hindi.
-- NEVER use word related to any religion, culture, or region (e.g. no "bhai", "dost", "janab", "sahib", "ji", "aapka din mubarak ho", etc.). You are a modern, professional salon receptionist, not a traditional one.
-
+LANGUAGE RULES:
+- Caller speaks English → respond fully in English.
+- Caller speaks Urdu → respond in pure Urdu only.
+- NEVER use Hindi words. Use "shukriya" not "shukria", "bohat acha" not "bahut accha", "khubsoorat" not "sundar".
+- Do not say "aapka din shubh ho" or any Hindi blessings.
 
 GREETING:
 - When the caller's first message is "__GREET__", greet warmly without calling any tool.
   English: "Hello! Welcome to our salon. How can I help you today?"
-  Urdu: "Assalamu Alaikum! hmary Salon mein khush aamdeed. Main aap ki kya khidmat kar sakti hoon?"
+  Urdu: "Assalamu Alaikum! Salon mein khush aamdeed. Main aap ki kya khidmat kar sakti hoon?"
 
 BOOKING (when caller wants to book an appointment):
 1. Immediately call get_services AND get_branches so you know what is available.
@@ -309,8 +302,7 @@ GENERAL:
                         }
 
                         if (message.serverContent?.interrupted) {
-                            console.log('[call] Gemini interrupted (barge-in) — clearing browser playback');
-                            ws.send(JSON.stringify({ type: 'interrupted' }));
+                            console.log('[call] Gemini interrupted (barge-in)');
                         }
 
                         // Tool call handling
