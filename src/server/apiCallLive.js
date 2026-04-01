@@ -162,7 +162,6 @@ function setupCallServer(server) {
                     responseModalities: [Modality.AUDIO],
                     speechConfig: {
                         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-                        languageCodes: ['ur-PK', 'en-US'],
                     },
 
                     systemInstruction: `
