@@ -273,7 +273,8 @@
       playConnectedSound();
       setCallStatus('Connected 🟢');
       startMicrophone(ws);
-      // Greeting is triggered server-side after Gemini session is ready
+      // Tell server to trigger Gemini greeting (server registers ws.on('message') only after connect)
+      ws.send(JSON.stringify({ type: 'greet' }));
     };
 
     ws.onmessage = function (e) {

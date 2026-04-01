@@ -344,24 +344,25 @@ GENERAL:
                 },
             });
 
-            // Gemini is ready — trigger greeting immediately from server side.
-            // We do NOT wait for a browser "greet" message because it always
-            // arrives before ws.on('message') is registered (race condition).
-            console.log('[call] Gemini ready — sending greeting trigger');
-            session.sendClientContent({
-                turns: [{ role: 'user', parts: [{ text: '__GREET__' }] }],
-                turnComplete: true,
-            });
+            console.log('[call] Gemini ready — waiting for browser greet signal');
 
-            // Browser messages: binary = PCM16 mic audio only
+            // Browser messages: binary = PCM16 mic audio; JSON = control messages
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
-                // Ignore JSON control messages — they are always short strings.
-                // Audio frames are always many hundreds of bytes, so length < 100 is a safe guard.
-                if (typeof data === 'string') return;
-                if (data instanceof Buffer && data.length < 100) {
-                    try { JSON.parse(data.toString()); return; } catch (_) { /* not JSON — treat as audio */ }
+                // JSON control messages (e.g. { type: 'greet' })
+                if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
+                    try {
+                        const msg = JSON.parse(data.toString());
+                        if (msg.type === 'greet') {
+                            console.log('[call] Sending greeting trigger to Gemini');
+                            session.sendClientContent({
+                                turns: [{ role: 'user', parts: [{ text: '__GREET__' }] }],
+                                turnComplete: true,
+                            });
+                        }
+                    } catch (_) { /* not JSON, ignore */ }
+                    return;
                 }
 
                 // Binary = raw PCM16 mic audio at 16kHz (downsampled by AudioWorklet in browser)
