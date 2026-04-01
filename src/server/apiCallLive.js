@@ -165,14 +165,13 @@ function setupCallServer(server) {
                     },
                     realtimeInputConfig: {
                         automaticActivityDetection: {
-                            // Low sensitivity = less likely to trigger on background noise
-                            startSensitivity: 'START_SENSITIVITY_LOW',
-                            // Low end sensitivity = waits longer before deciding caller stopped
-                            endSensitivity: 'END_SENSITIVITY_LOW',
-                            // 2s of silence required before Gemini considers the turn complete
-                            silenceDurationMs: 2000,
-                            // Small pad before speech registers — avoids clipping the first word
-                            prefixPaddingMs: 300,
+                            // High sensitivity — detects normal conversational speech
+                            startSensitivity: 'START_SENSITIVITY_HIGH',
+                            // High end sensitivity — ends turn promptly after caller stops
+                            endSensitivity: 'END_SENSITIVITY_HIGH',
+                            // 800ms silence before turn ends (was 2000 — too long, felt unresponsive)
+                            silenceDurationMs: 800,
+                            prefixPaddingMs: 200,
                         },
                     },
 
@@ -358,8 +357,12 @@ GENERAL:
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
-                // Ignore any JSON control messages (greet no longer needed)
-                if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) return;
+                // Ignore JSON control messages — they are always short strings.
+                // Audio frames are always many hundreds of bytes, so length < 100 is a safe guard.
+                if (typeof data === 'string') return;
+                if (data instanceof Buffer && data.length < 100) {
+                    try { JSON.parse(data.toString()); return; } catch (_) { /* not JSON — treat as audio */ }
+                }
 
                 // Binary = raw PCM16 mic audio at 16kHz (downsampled by AudioWorklet in browser)
                 try {

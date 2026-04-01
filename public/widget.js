@@ -379,9 +379,13 @@
         call.ws.send(e.data);
       };
 
+      // Route through a silent GainNode so Chrome keeps the AudioWorklet graph alive.
+      // Without a connection to destination Chrome suspends the worklet silently — mic sends nothing.
+      var silentGain = ctx.createGain();
+      silentGain.gain.value = 0;
+      worklet.connect(silentGain);
+      silentGain.connect(ctx.destination);
       src.connect(worklet);
-      // AudioWorkletNode does NOT need to connect to destination — no local playback of mic
-      // worklet.connect(ctx.destination); // required by some browsers to keep graph alive; silent output
     } catch (err) {
       console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
@@ -404,11 +408,12 @@
     // regardless of whether the browser honours a non-standard sample rate hint.
     const GEMINI_RATE = 24000;
 
-    if (!call.playbackCtx) {
+    if (!call.playbackCtx || call.playbackCtx.state === 'closed') {
       call.playbackCtx = new AudioContext(); // native rate (usually 48000 Hz)
     }
-
     const ctx = call.playbackCtx;
+    // AudioContext created outside user-gesture starts suspended in Chrome — resume it
+    if (ctx.state === 'suspended') ctx.resume();
     const ctxRate = ctx.sampleRate;
 
     // Convert Int16 -> Float32
