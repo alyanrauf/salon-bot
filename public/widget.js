@@ -367,8 +367,7 @@
       };
 
       src.connect(worklet);
-      // AudioWorkletNode does NOT need to connect to destination — no local playback of mic
-      // worklet.connect(ctx.destination); // required by some browsers to keep graph alive; silent output
+      worklet.connect(ctx.destination); // keeps Web Audio graph alive so process() runs; output is silent
     } catch (err) {
       console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
