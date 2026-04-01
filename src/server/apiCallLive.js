@@ -101,7 +101,7 @@ function setupCallServer(server) {
 
         try {
             const session = await client.live.connect({
-                model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+                model: 'models/gemini-2.0-flash-exp',
 
                 config: {
                     responseModalities: [Modality.AUDIO],
@@ -203,6 +203,7 @@ GENERAL:
 
                         if (message.serverContent?.interrupted) {
                             console.log('[call] Gemini interrupted (barge-in)');
+                            ws.send(JSON.stringify({ type: 'interrupted' })); 
                         }
 
                         // Tool call handling — only create_booking
@@ -241,35 +242,61 @@ GENERAL:
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
+                const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
                 // JSON control messages (e.g. { type: 'greet' })
-                if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
+                // if (typeof data === 'string' || (data instanceof Buffer && data[0] === 0x7b)) {
+                //     try {
+                //         const msg = JSON.parse(data.toString());
+                //         if (msg.type === 'greet') {
+                //             console.log('[call] Sending greeting trigger to Gemini');
+                //             session.sendClientContent({
+                //                 turns: [{
+                //                     role: 'user',
+                //                     parts: [{ text: '__GREET__' }],
+                //                 }],
+                //                 turnComplete: true,
+                //             });
+                //         }
+                //     } catch (_) { /* not JSON, ignore */ }
+                //     return;
+                // }
+
+                if (buffer[0] === 0x7b) {
                     try {
-                        const msg = JSON.parse(data.toString());
+                        const msg = JSON.parse(buffer.toString());
                         if (msg.type === 'greet') {
-                            console.log('[call] Sending greeting trigger to Gemini');
                             session.sendClientContent({
-                                turns: [{
-                                    role: 'user',
-                                    parts: [{ text: '__GREET__' }],
-                                }],
+                                turns: [{ role: 'user', parts: [{ text: '__GREET__' }] }],
                                 turnComplete: true,
                             });
                         }
-                    } catch (_) { /* not JSON, ignore */ }
+                    } catch (_) { }
                     return;
                 }
-
-                // Binary = raw PCM16 mic audio at 16kHz (downsampled by AudioWorklet in browser)
-                try {
-                    session.sendRealtimeInput({
-                        audio: {
-                            data: Buffer.from(data).toString('base64'),
-                            mimeType: 'audio/pcm;rate=16000',
-                        },
-                    });
-                } catch (err) {
-                    console.error('[call] sendRealtimeInput error:', err.message);
+                else {
+                    try {
+                        // Use the standard object format expected by the SDK
+                        session.sendRealtimeInput({
+                            audio: {
+                                data: buffer.toString('base64'),
+                                mimeType: 'audio/pcm;rate=16000',
+                            }
+                        });
+                    } catch (err) {
+                        console.error('[call] sendRealtimeInput error:', err.message);
+                    }
                 }
+                // Binary = raw PCM16 mic audio at 16kHz (downsampled by AudioWorklet in browser)
+                // try {
+                //     session.sendRealtimeInput({
+                //         audio: {
+                //             data: Buffer.from(data).toString('base64'),
+                //             mimeType: 'audio/pcm;rate=16000',
+                //         },
+                //     });
+                // } catch (err) {
+                //     console.error('[call] sendRealtimeInput error:', err.message);
+                // }
             });
 
             ws.on('close', () => {

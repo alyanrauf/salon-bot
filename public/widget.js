@@ -169,13 +169,13 @@
   // All call state kept in one object so cleanup is reliable and complete.
   var call = {
     ws: null,
-    stream: null,       // MediaStream (microphone)
-    audioCtx: null,     // Single AudioContext reused for the whole call
-    processor: null,    // ScriptProcessorNode
-    src: null,          // MediaStreamSource
-    playbackCtx: null,  // Separate AudioContext for playback
+    stream: null,
+    audioCtx: null,     // Capture Context
+    processor: null,
+    src: null,
+    playbackCtx: null,  // Playback Context
     playbackQueue: [],
-    isPlaying: false,
+    nextStartTime: 0,   // CRITICAL: Must be initialized
   };
 
   // FIX: teardown closes WS, stops mic, and closes both AudioContexts.
@@ -186,16 +186,14 @@
     if (call.processor) { try { call.processor.disconnect(); } catch (_) { } call.processor = null; }
     if (call.src) { try { call.src.disconnect(); } catch (_) { } call.src = null; }
     if (call.stream) {
-      console.log('[call] stopping local microphone stream');
       call.stream.getTracks().forEach(function (t) { t.stop(); });
       call.stream = null;
     }
     if (call.audioCtx) { try { call.audioCtx.close(); } catch (_) { } call.audioCtx = null; }
     if (call.playbackCtx) { try { call.playbackCtx.close(); } catch (_) { } call.playbackCtx = null; }
     call.playbackQueue = [];
-    call.isPlaying = false;
+    call.nextStartTime = 0; // Reset scheduler
     if (call.ws) {
-      console.log('[call] closing websocket');
       try { call.ws.close(); } catch (_) { }
       call.ws = null;
     }
@@ -203,13 +201,14 @@
 
   // ── Voice Call Modal ───────────────────────────────────────────────────────
   function startVoiceCallModal() {
-    console.log('[call] startVoiceCallModal()');
-    // Prevent duplicate modals
     var existing = document.getElementById('salonbot-call-modal');
-    if (existing) {
-      console.log('[call] call modal already open');
-      return;
-    }
+    if (existing) return;
+
+    // 1. CRITICAL: Initialize Audio Contexts immediately on User Gesture
+    if (!call.playbackCtx) call.playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (call.playbackCtx.state === 'suspended') call.playbackCtx.resume();
+
+    call.nextStartTime = 0; // Reset for new call
 
     var modal = document.createElement('div');
     modal.id = 'salonbot-call-modal';
@@ -237,58 +236,49 @@
 
   function clearPlayback() {
     call.playbackQueue = [];
-    call.isPlaying = false;
+    call.nextStartTime = 0;
+
     if (call.playbackCtx) {
-      try { call.playbackCtx.close(); } catch (_) { }
-      call.playbackCtx = null;
+      // Instead of closing and recreating (which can be blocked), 
+      // we just suspend it and resume it, or simply let the scheduled 
+      // sounds finish while resetting our scheduler to "now".
+      try {
+        // This is the "Brute Force" way to stop all sounds immediately:
+        call.playbackCtx.close();
+      } catch (e) { }
+
+      // Re-initialize immediately. 
+      // To be safe, we do this part without waiting for the promise
+      call.playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
+      call.nextStartTime = call.playbackCtx.currentTime;
     }
   }
 
   // ── Gemini Voice Call (WebSocket) ──────────────────────────────────────────
   function startVoiceCall(modal) {
     var wsUrl = baseUrl.replace('https', 'wss').replace('http', 'ws') + '/api/call';
-    console.log('[call] startVoiceCall() connecting to', wsUrl);
-
     startDialTone();
     var ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     call.ws = ws;
 
     ws.onopen = function () {
-      console.log('[call] websocket onopen');
       playConnectedSound();
       setCallStatus('Connected 🟢');
       startMicrophone(ws);
-      // Ask server to send the greeting trigger to Gemini
       ws.send(JSON.stringify({ type: 'greet' }));
     };
 
     ws.onmessage = function (e) {
-      console.log('[call] websocket onmessage, type:', typeof e.data);
       if (typeof e.data !== 'string') {
-        // Binary = PCM16 audio from Gemini
-        console.log('[call] websocket audio chunk received:', e.data.byteLength || '(unknown bytes)');
         call.playbackQueue.push(e.data);
         processPlaybackQueue();
       } else {
         try {
           var msg = JSON.parse(e.data);
-          console.log('[call] websocket text message:', msg);
-          if (msg.type === 'interrupted') {
-            clearPlayback();
-          }
-          if (msg.type === 'text') {
-            console.log('[call] Transcript:', msg.text);
-          }
-        } catch (err) {
-          console.error('[call] websocket text parse error', err, 'data:', e.data);
-        }
+          if (msg.type === 'interrupted') clearPlayback();
+        } catch (err) { }
       }
-    };
-
-    ws.onerror = function (err) {
-      console.error('[call] WebSocket error', err);
-      setCallStatus('Connection error ❌');
     };
 
     ws.onclose = function () {
@@ -306,136 +296,209 @@
   // ── Microphone capture → Gemini ────────────────────────────────────────────
   // Uses AudioWorklet (128-sample chunks at 16kHz) for clean, low-latency capture.
   // AudioWorklet code is injected as a Blob URL — no separate file needed.
+  // async function startMicrophone(ws) {
+  //   console.log('[call] startMicrophone()');
+  //   try {
+  //     var stream = await navigator.mediaDevices.getUserMedia({
+  //       audio: { echoCancellation: true, noiseSuppression: true }
+  //     });
+  //     console.log('[call] getUserMedia success', stream);
+  //     call.stream = stream;
+
+  //     var ctx = new AudioContext(); // native rate (usually 48000 Hz); worklet downsamples to 16kHz
+  //     call.audioCtx = ctx;
+
+  //     // Inject worklet as a Blob so we don't need a separate .js file on the server
+  //     var workletCode = [
+  //       'var TARGET_RATE = 16000;',
+  //       'class PcmCapture extends AudioWorkletProcessor {',
+  //       '  constructor() {',
+  //       '    super();',
+  //       '    // sampleRate global = actual AudioContext rate (e.g. 48000)',
+  //       '    this._ratio = sampleRate / TARGET_RATE;',
+  //       '    this._acc = 0;',
+  //       '  }',
+  //       '  process(inputs) {',
+  //       '    var ch = inputs[0][0];',
+  //       '    if (!ch || !ch.length) return true;',
+  //       '    var out = [];',
+  //       '    for (var i = 0; i < ch.length; i++) {',
+  //       '      this._acc += 1;',
+  //       '      if (this._acc >= this._ratio) {',
+  //       '        this._acc -= this._ratio;',
+  //       '        out.push(Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32768))));',
+  //       '      }',
+  //       '    }',
+  //       '    if (out.length > 0) {',
+  //       '      var pcm = new Int16Array(out);',
+  //       '      this.port.postMessage(pcm.buffer, [pcm.buffer]);',
+  //       '    }',
+  //       '    return true;',
+  //       '  }',
+  //       '}',
+  //       'registerProcessor("pcm-capture", PcmCapture);'
+  //     ].join('\n');
+
+  //     var blob = new Blob([workletCode], { type: 'application/javascript' });
+  //     var blobUrl = URL.createObjectURL(blob);
+
+  //     await ctx.audioWorklet.addModule(blobUrl);
+  //     URL.revokeObjectURL(blobUrl);
+
+  //     var src = ctx.createMediaStreamSource(stream);
+  //     call.src = src;
+
+  //     var worklet = new AudioWorkletNode(ctx, 'pcm-capture');
+  //     call.processor = worklet;
+
+  //     worklet.port.onmessage = function (e) {
+  //       if (!call.ws || call.ws.readyState !== WebSocket.OPEN) return;
+  //       call.ws.send(e.data);
+  //     };
+
+  //     src.connect(worklet);
+  //     worklet.connect(ctx.destination); // keeps Web Audio graph alive so process() runs; output is silent
+  //   } catch (err) {
+  //     console.error('[call] Microphone error:', err);
+  //     setCallStatus('Mic access denied ❌');
+  //   }
+  // }
   async function startMicrophone(ws) {
-    console.log('[call] startMicrophone()');
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
-      console.log('[call] getUserMedia success', stream);
       call.stream = stream;
 
-      var ctx = new AudioContext(); // native rate (usually 48000 Hz); worklet downsamples to 16kHz
+      // Use a consistent sample rate for Gemini
+      const ctx = new AudioContext({ sampleRate: 16000 });
+      await ctx.resume();
       call.audioCtx = ctx;
 
-      // Inject worklet as a Blob so we don't need a separate .js file on the server
-      var workletCode = [
-        'var TARGET_RATE = 16000;',
-        'class PcmCapture extends AudioWorkletProcessor {',
-        '  constructor() {',
-        '    super();',
-        '    // sampleRate global = actual AudioContext rate (e.g. 48000)',
-        '    this._ratio = sampleRate / TARGET_RATE;',
-        '    this._acc = 0;',
-        '  }',
-        '  process(inputs) {',
-        '    var ch = inputs[0][0];',
-        '    if (!ch || !ch.length) return true;',
-        '    var out = [];',
-        '    for (var i = 0; i < ch.length; i++) {',
-        '      this._acc += 1;',
-        '      if (this._acc >= this._ratio) {',
-        '        this._acc -= this._ratio;',
-        '        out.push(Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32768))));',
-        '      }',
-        '    }',
-        '    if (out.length > 0) {',
-        '      var pcm = new Int16Array(out);',
-        '      this.port.postMessage(pcm.buffer, [pcm.buffer]);',
-        '    }',
-        '    return true;',
-        '  }',
-        '}',
-        'registerProcessor("pcm-capture", PcmCapture);'
-      ].join('\n');
+      const workletCode = `
+      class PcmCapture extends AudioWorkletProcessor {
+        process(inputs) {
+          const input = inputs[0][0];
+          if (!input) return true;
+          const pcm = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            pcm[i] = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
+          }
+          this.port.postMessage(pcm.buffer, [pcm.buffer]);
+          return true;
+        }
+      }
+      registerProcessor("pcm-capture", PcmCapture);`;
 
-      var blob = new Blob([workletCode], { type: 'application/javascript' });
-      var blobUrl = URL.createObjectURL(blob);
-
+      const blob = new Blob([workletCode], { type: 'application/javascript' });
+      const blobUrl = URL.createObjectURL(blob);
       await ctx.audioWorklet.addModule(blobUrl);
-      URL.revokeObjectURL(blobUrl);
 
-      var src = ctx.createMediaStreamSource(stream);
-      call.src = src;
+      const src = ctx.createMediaStreamSource(stream);
+      const worklet = new AudioWorkletNode(ctx, 'pcm-capture');
 
-      var worklet = new AudioWorkletNode(ctx, 'pcm-capture');
-      call.processor = worklet;
-
-      worklet.port.onmessage = function (e) {
-        if (!call.ws || call.ws.readyState !== WebSocket.OPEN) return;
-        call.ws.send(e.data);
+      worklet.port.onmessage = (e) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(e.data);
       };
 
       src.connect(worklet);
-      worklet.connect(ctx.destination); // keeps Web Audio graph alive so process() runs; output is silent
+      worklet.connect(ctx.destination);
+      call.processor = worklet;
+      call.src = src;
     } catch (err) {
-      console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
     }
   }
 
   // ── Play PCM16 audio from Gemini ───────────────────────────────────────────
 
+  // function processPlaybackQueue() {
+  //   if (call.isPlaying || call.playbackQueue.length === 0) return;
+  //   call.isPlaying = true;
+  //   console.log('[call] processPlaybackQueue: next item, queue length', call.playbackQueue.length);
+  //   playPCM16(call.playbackQueue.shift());
+  // }
+
+  // function playPCM16(buffer) {
+  //   console.log('[call] playPCM16() -- received audio chunk', buffer.byteLength || '(unknown bytes)');
+  //   // Gemini Live API outputs 24kHz PCM16. Use native-rate AudioContext and
+  //   // linear-interpolation upsample so playback pitch/speed is always correct
+  //   // regardless of whether the browser honours a non-standard sample rate hint.
+  //   const GEMINI_RATE = 24000;
+
+  //   if (!call.playbackCtx) {
+  //     call.playbackCtx = new AudioContext(); // native rate (usually 48000 Hz)
+  //   }
+
+  //   const ctx = call.playbackCtx;
+  //   const ctxRate = ctx.sampleRate;
+
+  //   // Convert Int16 -> Float32
+  //   const int16 = new Int16Array(buffer);
+  //   const float = new Float32Array(int16.length);
+  //   for (let i = 0; i < int16.length; i++) {
+  //     float[i] = int16[i] / 32768;
+  //   }
+
+  //   // Upsample from GEMINI_RATE to ctxRate via linear interpolation
+  //   let samples;
+  //   if (GEMINI_RATE !== ctxRate) {
+  //     const ratio = ctxRate / GEMINI_RATE; // e.g. 48000/24000 = 2
+  //     samples = new Float32Array(Math.round(float.length * ratio));
+  //     for (let i = 0; i < samples.length; i++) {
+  //       const src = i / ratio;
+  //       const lo = Math.floor(src);
+  //       const hi = Math.min(lo + 1, float.length - 1);
+  //       const frac = src - lo;
+  //       samples[i] = float[lo] * (1 - frac) + float[hi] * frac;
+  //     }
+  //   } else {
+  //     samples = float;
+  //   }
+
+  //   // Create audio buffer at the context's native rate
+  //   const audioBuffer = ctx.createBuffer(1, samples.length, ctxRate);
+  //   audioBuffer.getChannelData(0).set(samples);
+
+  //   // Play it
+  //   const source = ctx.createBufferSource();
+  //   source.buffer = audioBuffer;
+  //   source.connect(ctx.destination);
+  //   source.onended = function () {
+  //     console.log('[call] playPCM16 playback ended');
+  //     call.isPlaying = false;
+  //     processPlaybackQueue();
+  //   };
+  //   source.start();
+  // }
+
   function processPlaybackQueue() {
-    if (call.isPlaying || call.playbackQueue.length === 0) return;
-    call.isPlaying = true;
-    console.log('[call] processPlaybackQueue: next item, queue length', call.playbackQueue.length);
-    playPCM16(call.playbackQueue.shift());
+    while (call.playbackQueue.length > 0) {
+      playPCM16(call.playbackQueue.shift());
+    }
   }
 
   function playPCM16(buffer) {
-    console.log('[call] playPCM16() -- received audio chunk', buffer.byteLength || '(unknown bytes)');
-    // Gemini Live API outputs 24kHz PCM16. Use native-rate AudioContext and
-    // linear-interpolation upsample so playback pitch/speed is always correct
-    // regardless of whether the browser honours a non-standard sample rate hint.
     const GEMINI_RATE = 24000;
-
-    if (!call.playbackCtx) {
-      call.playbackCtx = new AudioContext(); // native rate (usually 48000 Hz)
-    }
+    if (!call.playbackCtx) return;
 
     const ctx = call.playbackCtx;
-    const ctxRate = ctx.sampleRate;
-
-    // Convert Int16 -> Float32
     const int16 = new Int16Array(buffer);
     const float = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++) {
-      float[i] = int16[i] / 32768;
-    }
+    for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
 
-    // Upsample from GEMINI_RATE to ctxRate via linear interpolation
-    let samples;
-    if (GEMINI_RATE !== ctxRate) {
-      const ratio = ctxRate / GEMINI_RATE; // e.g. 48000/24000 = 2
-      samples = new Float32Array(Math.round(float.length * ratio));
-      for (let i = 0; i < samples.length; i++) {
-        const src = i / ratio;
-        const lo = Math.floor(src);
-        const hi = Math.min(lo + 1, float.length - 1);
-        const frac = src - lo;
-        samples[i] = float[lo] * (1 - frac) + float[hi] * frac;
-      }
-    } else {
-      samples = float;
-    }
+    const audioBuffer = ctx.createBuffer(1, float.length, GEMINI_RATE);
+    audioBuffer.getChannelData(0).set(float);
 
-    // Create audio buffer at the context's native rate
-    const audioBuffer = ctx.createBuffer(1, samples.length, ctxRate);
-    audioBuffer.getChannelData(0).set(samples);
-
-    // Play it
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
-    source.onended = function () {
-      console.log('[call] playPCM16 playback ended');
-      call.isPlaying = false;
-      processPlaybackQueue();
-    };
-    source.start();
-  }
 
+    // If nextStartTime is in the past, start playing from 'now'
+    const startTime = Math.max(ctx.currentTime, call.nextStartTime);
+    source.start(startTime);
+    call.nextStartTime = startTime + audioBuffer.duration;
+  }
   // ── Open / close chat ──────────────────────────────────────────────────────
   function open() {
     opened = true;
