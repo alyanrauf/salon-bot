@@ -58,7 +58,7 @@ function initSchema(db) {
       branch        TEXT,
       date          TEXT,
       time          TEXT,
-      status        TEXT    NOT NULL DEFAULT 'pending',
+      status        TEXT    NOT NULL DEFAULT 'confirmed',
       source        TEXT    DEFAULT 'manual',
       notes         TEXT,
       calendly_uri  TEXT    UNIQUE,

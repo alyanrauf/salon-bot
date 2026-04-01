@@ -46,7 +46,7 @@ function saveBooking(data, platform) {
   const db = getDb();
   db.prepare(`
     INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)
   `).run(
     data.name,
     data.phone,

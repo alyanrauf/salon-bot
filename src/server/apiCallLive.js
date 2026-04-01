@@ -107,7 +107,7 @@ async function handleVoiceTool(name, args) {
 
         db.prepare(`
             INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', 'voice', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'confirmed', 'voice', ?, ?)
         `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, date.trim(), time.trim(), staffId, staffNameSaved);
 
         let confirm = `Booking confirmed for ${custName} — ${svcRow.name} at ${brRow.name} on ${date} at ${time}`;
@@ -217,20 +217,20 @@ GENERAL:
                                     description: 'Get all salon branch names and locations.',
                                     parameters: { type: 'object', properties: {} },
                                 },
-                                {
-                                    name: 'get_staff',
-                                    description: 'Get staff members available at a specific branch. Returns "NO_STAFF" if the branch has no staff.',
-                                    parameters: {
-                                        type: 'object',
-                                        properties: {
-                                            branch: {
-                                                type: 'string',
-                                                description: 'Branch name, e.g. "Gulberg"',
-                                            },
-                                        },
-                                        required: ['branch'],
-                                    },
-                                },
+                                // {
+                                //     name: 'get_staff',
+                                //     description: 'Get staff members available at a specific branch. Returns "NO_STAFF" if the branch has no staff.',
+                                //     parameters: {
+                                //         type: 'object',
+                                //         properties: {
+                                //             branch: {
+                                //                 type: 'string',
+                                //                 description: 'Branch name, e.g. "Gulberg"',
+                                //             },
+                                //         },
+                                //         required: ['branch'],
+                                //     },
+                                // },
                                 {
                                     name: 'get_timings',
                                     description: 'Get salon opening and closing hours for a given date.',
@@ -257,7 +257,7 @@ GENERAL:
                                             branch:     { type: 'string', description: 'Exact branch name from get_branches' },
                                             date:       { type: 'string', description: 'Appointment date, e.g. "kal", "30 March", "2026-04-01"' },
                                             time:       { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
-                                            staff_name: { type: 'string', description: 'Staff member name from get_staff. Omit if caller has no preference.' },
+                                            //staff_name: { type: 'string', description: 'Staff member name from get_staff. Omit if caller has no preference.' },
                                         },
                                         required: ['name', 'phone', 'service', 'branch', 'date', 'time'],
                                     },
