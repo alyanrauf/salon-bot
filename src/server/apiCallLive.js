@@ -161,17 +161,6 @@ function setupCallServer(server) {
                     speechConfig: {
                         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
                     },
-                    realtimeInputConfig: {
-                        automaticActivityDetection: {
-                            // High sensitivity — detects normal conversational speech
-                            startSensitivity: 'START_SENSITIVITY_HIGH',
-                            // High end sensitivity — ends turn promptly after caller stops
-                            endSensitivity: 'END_SENSITIVITY_HIGH',
-                            // 800ms silence before turn ends (was 2000 — too long, felt unresponsive)
-                            silenceDurationMs: 800,
-                            prefixPaddingMs: 200,
-                        },
-                    },
 
                     systemInstruction: `
 You are a live voice receptionist for a beauty salon. You speak ONLY in pure Urdu or English — never Hindi.
@@ -262,12 +251,12 @@ GENERAL:
                                     parameters: {
                                         type: 'object',
                                         properties: {
-                                            name:       { type: 'string', description: 'Customer full name' },
-                                            phone:      { type: 'string', description: 'Phone number, digits only, e.g. "03001234567"' },
-                                            service:    { type: 'string', description: 'Exact service name from get_services' },
-                                            branch:     { type: 'string', description: 'Exact branch name from get_branches' },
-                                            date:       { type: 'string', description: 'Appointment date, e.g. "kal", "30 March", "2026-04-01"' },
-                                            time:       { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
+                                            name: { type: 'string', description: 'Customer full name' },
+                                            phone: { type: 'string', description: 'Phone number, digits only, e.g. "03001234567"' },
+                                            service: { type: 'string', description: 'Exact service name from get_services' },
+                                            branch: { type: 'string', description: 'Exact branch name from get_branches' },
+                                            date: { type: 'string', description: 'Appointment date, e.g. "kal", "30 March", "2026-04-01"' },
+                                            time: { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
                                             staff_name: { type: 'string', description: 'Staff member name from get_staff. Omit if caller has no preference.' },
                                         },
                                         required: ['name', 'phone', 'service', 'branch', 'date', 'time'],
@@ -337,9 +326,7 @@ GENERAL:
                 },
             });
 
-            console.log('[call] Gemini ready — waiting for browser greet signal');
-
-            // Browser messages: binary = PCM16 mic audio; JSON = control messages
+            // Browser messages: binary = PCM16 mic audio; text JSON = control messages
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
@@ -350,7 +337,10 @@ GENERAL:
                         if (msg.type === 'greet') {
                             console.log('[call] Sending greeting trigger to Gemini');
                             session.sendClientContent({
-                                turns: [{ role: 'user', parts: [{ text: '__GREET__' }] }],
+                                turns: [{
+                                    role: 'user',
+                                    parts: [{ text: '__GREET__' }],
+                                }],
                                 turnComplete: true,
                             });
                         }
