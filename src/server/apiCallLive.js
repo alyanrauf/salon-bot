@@ -163,6 +163,18 @@ function setupCallServer(server) {
                     speechConfig: {
                         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
                     },
+                    realtimeInputConfig: {
+                        automaticActivityDetection: {
+                            // Low sensitivity = less likely to trigger on background noise
+                            startSensitivity: 'START_SENSITIVITY_LOW',
+                            // Low end sensitivity = waits longer before deciding caller stopped
+                            endSensitivity: 'END_SENSITIVITY_LOW',
+                            // 2s of silence required before Gemini considers the turn complete
+                            silenceDurationMs: 2000,
+                            // Small pad before speech registers — avoids clipping the first word
+                            prefixPaddingMs: 300,
+                        },
+                    },
 
                     systemInstruction: `
 You are a live voice receptionist for a beauty salon.

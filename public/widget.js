@@ -324,7 +324,7 @@
     console.log('[call] startMicrophone()');
     try {
       var stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true }
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
       });
       console.log('[call] getUserMedia success', stream);
       call.stream = stream;
