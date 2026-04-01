@@ -310,24 +310,37 @@
     console.log('[call] startMicrophone()');
     try {
       var stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
+        audio: { echoCancellation: true, noiseSuppression: true }
       });
       console.log('[call] getUserMedia success', stream);
       call.stream = stream;
 
-      var ctx = new AudioContext({ sampleRate: 16000 });
+      var ctx = new AudioContext(); // native rate (usually 48000 Hz); worklet downsamples to 16kHz
       call.audioCtx = ctx;
 
       // Inject worklet as a Blob so we don't need a separate .js file on the server
       var workletCode = [
+        'var TARGET_RATE = 16000;',
         'class PcmCapture extends AudioWorkletProcessor {',
+        '  constructor() {',
+        '    super();',
+        '    // sampleRate global = actual AudioContext rate (e.g. 48000)',
+        '    this._ratio = sampleRate / TARGET_RATE;',
+        '    this._acc = 0;',
+        '  }',
         '  process(inputs) {',
         '    var ch = inputs[0][0];',
-        '    if (ch && ch.length) {',
-        '      var pcm = new Int16Array(ch.length);',
-        '      for (var i = 0; i < ch.length; i++) {',
-        '        pcm[i] = Math.max(-32768, Math.min(32767, ch[i] * 32767));',
+        '    if (!ch || !ch.length) return true;',
+        '    var out = [];',
+        '    for (var i = 0; i < ch.length; i++) {',
+        '      this._acc += 1;',
+        '      if (this._acc >= this._ratio) {',
+        '        this._acc -= this._ratio;',
+        '        out.push(Math.max(-32768, Math.min(32767, Math.round(ch[i] * 32768))));',
         '      }',
+        '    }',
+        '    if (out.length > 0) {',
+        '      var pcm = new Int16Array(out);',
         '      this.port.postMessage(pcm.buffer, [pcm.buffer]);',
         '    }',
         '    return true;',
@@ -355,7 +368,7 @@
 
       src.connect(worklet);
       // AudioWorkletNode does NOT need to connect to destination — no local playback of mic
-      worklet.connect(ctx.destination); // required by some browsers to keep graph alive; silent output
+      // worklet.connect(ctx.destination); // required by some browsers to keep graph alive; silent output
     } catch (err) {
       console.error('[call] Microphone error:', err);
       setCallStatus('Mic access denied ❌');
@@ -373,14 +386,17 @@
 
   function playPCM16(buffer) {
     console.log('[call] playPCM16() -- received audio chunk', buffer.byteLength || '(unknown bytes)');
-    // Gemini Live API outputs 24kHz PCM16 (input is 16kHz, output is 24kHz — asymmetric)
-    const sampleRate = 24000;
+    // Gemini Live API outputs 24kHz PCM16. Use native-rate AudioContext and
+    // linear-interpolation upsample so playback pitch/speed is always correct
+    // regardless of whether the browser honours a non-standard sample rate hint.
+    const GEMINI_RATE = 24000;
 
     if (!call.playbackCtx) {
-      call.playbackCtx = new AudioContext({ sampleRate: 24000 });
+      call.playbackCtx = new AudioContext(); // native rate (usually 48000 Hz)
     }
 
     const ctx = call.playbackCtx;
+    const ctxRate = ctx.sampleRate;
 
     // Convert Int16 -> Float32
     const int16 = new Int16Array(buffer);
@@ -389,9 +405,25 @@
       float[i] = int16[i] / 32768;
     }
 
-    // Create audio buffer
-    const audioBuffer = ctx.createBuffer(1, float.length, sampleRate);
-    audioBuffer.getChannelData(0).set(float);
+    // Upsample from GEMINI_RATE to ctxRate via linear interpolation
+    let samples;
+    if (GEMINI_RATE !== ctxRate) {
+      const ratio = ctxRate / GEMINI_RATE; // e.g. 48000/24000 = 2
+      samples = new Float32Array(Math.round(float.length * ratio));
+      for (let i = 0; i < samples.length; i++) {
+        const src = i / ratio;
+        const lo = Math.floor(src);
+        const hi = Math.min(lo + 1, float.length - 1);
+        const frac = src - lo;
+        samples[i] = float[lo] * (1 - frac) + float[hi] * frac;
+      }
+    } else {
+      samples = float;
+    }
+
+    // Create audio buffer at the context's native rate
+    const audioBuffer = ctx.createBuffer(1, samples.length, ctxRate);
+    audioBuffer.getChannelData(0).set(samples);
 
     // Play it
     const source = ctx.createBufferSource();

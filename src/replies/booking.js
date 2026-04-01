@@ -103,6 +103,37 @@ function isValidPhone(text) {
   return /^\+?[0-9]{7,15}$/.test(t);
 }
 
+// Extracts date keyword or date string from conversational speech
+// "kal ana chahta hoon" → "kal", "30 March ko aana hai" → "30 March"
+function extractDate(text) {
+  const t = text.trim().toLowerCase();
+  const relWords = ['aaj', 'kal', 'parson', 'today', 'tomorrow', 'day after tomorrow'];
+  for (const w of relWords) {
+    if (t.includes(w)) return w;
+  }
+  const cleaned = text.trim()
+    .replace(/^(date|tarikh|date hai|mujhe|main|I want|i want|aana chahta hoon|aana chahti hoon|ko aana|ko jana|ko chahiye)\s*/i, '')
+    .replace(/\s*(ko|par|ko aana|ana chahta hoon|ana chahti hoon|jana chahta hoon|theek hai|hai|hoon|he)$/i, '')
+    .trim();
+  return cleaned || text.trim();
+}
+
+// Extracts time value from conversational speech
+// "2 baje theek hai" → "2 baje", "3 pm par aaonga" → "3 pm"
+function extractTime(text) {
+  const t = text.trim();
+  const patterns = [
+    /\b([01]?\d|2[0-3]):[0-5]\d(\s?(am|pm))?/i,
+    /\b([01]?\d|2[0-3])\s?(am|pm)\b/i,
+    /\b([01]?\d|2[0-3])\s(baje|o'clock|oclock)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) return m[0].trim();
+  }
+  return t;
+}
+
 // Validates date: accepts "30 March", "April 5", "2026-04-05", "tomorrow", "kal", "parson", "aaj"
 function isValidDate(text) {
   const t = text.trim().toLowerCase();
@@ -223,6 +254,7 @@ function handleBookingStep(userId, text, session, platform) {
       return '⚠️ Please enter your *full name* (letters only).';
     }
     const cleanName = extractName(text.trim());
+    console.log('[BOOKING FIELDS] name:', JSON.stringify(cleanName));
     setSession(userId, { ...session, state: 'ASK_PHONE', name: cleanName });
     return `👋 Hi *${cleanName}*!\n\nWhat's your *phone number*?`;
   }
@@ -237,6 +269,7 @@ function handleBookingStep(userId, text, session, platform) {
       clearSession(userId);
       return 'Sorry, no services are available right now. Please contact us directly.';
     }
+    console.log('[BOOKING FIELDS] phone:', JSON.stringify(extractPhone(text.trim())));
     setSession(userId, { ...session, state: 'ASK_SERVICE', phone: extractPhone(text.trim()) });
     return (
       '✅ Got it!\n\nWhich *service* would you like?\n\n' +
@@ -265,6 +298,7 @@ function handleBookingStep(userId, text, session, platform) {
       );
     }
 
+    console.log('[BOOKING FIELDS] service:', JSON.stringify(chosenService));
     setSession(userId, { ...session, state: 'ASK_BRANCH', service: chosenService });
     return (
       `✨ *${chosenService}* — great choice!\n\n` +
@@ -287,6 +321,7 @@ function handleBookingStep(userId, text, session, platform) {
         branchList()
       );
     }
+    console.log('[BOOKING FIELDS] branch:', JSON.stringify(branch.name));
     const staffList = getActiveStaff(branch.name);
     if (!staffList.length) {
       setSession(userId, { ...session, state: 'ASK_DATE', branch: branch.name, staffId: null, staffName: null });
@@ -331,6 +366,7 @@ function handleBookingStep(userId, text, session, platform) {
       }
     }
 
+    console.log('[BOOKING FIELDS] staff:', staffId, staffName);
     setSession(userId, { ...session, state: 'ASK_DATE', staffId, staffName });
     const staffMsg = staffName ? `👤 *${staffName}* — great choice!\n\n` : '';
     return (
@@ -342,36 +378,40 @@ function handleBookingStep(userId, text, session, platform) {
 
   // ── STEP 6: Got date → ask time ───────────────────────────────────────────
   if (session.state === 'ASK_DATE') {
-    if (!isValidDate(text)) {
+    const dateText = extractDate(text);
+    console.log('[BOOKING FIELDS] ASK_DATE raw:', JSON.stringify(text), '→ extracted:', JSON.stringify(dateText));
+    if (!isValidDate(dateText)) {
       return (
         '⚠️ Please enter a valid *date*.\n\n' +
         '_e.g. 30 March · April 5 · tomorrow · 2026-04-05_'
       );
     }
-    setSession(userId, { ...session, state: 'ASK_TIME', date: text });
+    setSession(userId, { ...session, state: 'ASK_TIME', date: dateText });
 
-    const timing = getSalonTiming(text);
+    const timing = getSalonTiming(dateText);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
     if (timing) {
       timeHint = `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n${timeHint}`;
     }
 
     return (
-      `📆 *${text}* — noted!\n\n` +
+      `📆 *${dateText}* — noted!\n\n` +
       `What *time* works for you?\n\n${timeHint}`
     );
   }
 
   // ── STEP 7: Got time → validate & save ────────────────────────────────────
   if (session.state === 'ASK_TIME') {
-    if (!isValidTime(text)) {
+    const timeText = extractTime(text);
+    console.log('[BOOKING FIELDS] ASK_TIME raw:', JSON.stringify(text), '→ extracted:', JSON.stringify(timeText));
+    if (!isValidTime(timeText)) {
       return (
         '⚠️ Please enter a valid *time*.\n\n' +
         '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_'
       );
     }
 
-    const time24 = parseTimeTo24h(text);
+    const time24 = parseTimeTo24h(timeText);
     if (time24) {
       const timing = getSalonTiming(session.date);
       if (timing) {
@@ -412,10 +452,11 @@ function handleBookingStep(userId, text, session, platform) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: text,
+      time: timeText,
       staffId: session.staffId || null,
       staffName: session.staffName || null,
     };
+    console.log('[BOOKING FIELDS] SAVING BOOKING:', JSON.stringify(bookingData));
 
     try {
       saveBooking(bookingData, session.platform);

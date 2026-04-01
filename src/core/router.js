@@ -16,6 +16,7 @@ const FALLBACK_MESSAGE =
 
 async function routeMessage(userId, messageText, platform) {
   let session = getSession(userId);
+  console.log('[BOOKING ROUTER] userId:', userId, '| platform:', platform, '| text:', JSON.stringify(messageText), '| sessionState:', session?.state || 'none');
 
   if (session && isSessionExpired(session, 5)) {
     clearSession(userId);

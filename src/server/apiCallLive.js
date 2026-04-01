@@ -1,12 +1,129 @@
 const { WebSocketServer } = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
-const { routeMessage } = require('../core/router');
+const { getDb } = require('../db/database');
+
+// ── Voice tool implementations ──────────────────────────────────────────────
+
+function isWeekendForDate(dateStr) {
+    const t = (dateStr || '').trim().toLowerCase();
+    let d;
+    if (t === 'today' || t === 'aaj') {
+        d = new Date();
+    } else if (t === 'tomorrow' || t === 'kal') {
+        d = new Date();
+        d.setDate(d.getDate() + 1);
+    } else if (t === 'parson' || t === 'day after tomorrow') {
+        d = new Date();
+        d.setDate(d.getDate() + 2);
+    } else {
+        d = new Date(dateStr);
+        if (isNaN(d.getTime())) d = new Date(dateStr + ' ' + new Date().getFullYear());
+    }
+    if (isNaN(d.getTime())) return false;
+    return d.getDay() === 0 || d.getDay() === 6;
+}
+
+async function handleVoiceTool(name, args) {
+    const db = getDb();
+
+    if (name === 'get_services') {
+        const rows = db.prepare('SELECT name, price FROM services ORDER BY name').all();
+        if (!rows.length) return 'No services available right now.';
+        return rows.map(r => `${r.name}: ${r.price}`).join(', ');
+    }
+
+    if (name === 'get_branches') {
+        const rows = db.prepare('SELECT name, address, phone FROM branches ORDER BY name').all();
+        if (!rows.length) return 'No branches available right now.';
+        return rows.map(r => [r.name, r.address, r.phone].filter(Boolean).join(' — ')).join(' | ');
+    }
+
+    if (name === 'get_timings') {
+        const dayType = isWeekendForDate(args.date || 'today') ? 'weekend' : 'workday';
+        const row = db.prepare('SELECT open_time, close_time FROM salon_timings WHERE day_type = ?').get(dayType);
+        if (!row) return 'Timing info not configured.';
+        return `Salon is open ${row.open_time} to ${row.close_time} on ${dayType}s.`;
+    }
+
+    if (name === 'get_staff') {
+        const branchName = (args.branch || '').trim();
+        let brRow = db.prepare('SELECT id, name FROM branches WHERE LOWER(name) = LOWER(?)').get(branchName);
+        if (!brRow) brRow = db.prepare("SELECT id, name FROM branches WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(branchName);
+        if (!brRow) return 'Branch not found.';
+
+        const staff = db.prepare(`
+            SELECT s.id, s.name, r.name as role
+            FROM staff s
+            LEFT JOIN staff_roles r ON s.role_id = r.id
+            WHERE s.branch_id = ?
+              AND (r.name IS NULL OR LOWER(r.name) NOT IN ('admin', 'receptionist', 'manager'))
+            ORDER BY s.name
+        `).all(brRow.id);
+
+        if (!staff.length) return 'NO_STAFF';
+        return staff.map(s => `${s.name} (${s.role || 'Stylist'})`).join(', ');
+    }
+
+    if (name === 'create_booking') {
+        const { name: custName, phone, service, branch, date, time, staff_name } = args;
+
+        if (!custName || !phone || !service || !branch || !date || !time) {
+            return 'Missing required fields. Need: name, phone, service, branch, date, time.';
+        }
+
+        // Case-insensitive service lookup — exact first, then partial
+        let svcRow = db.prepare('SELECT name FROM services WHERE LOWER(name) = LOWER(?)').get(service.trim());
+        if (!svcRow) {
+            svcRow = db.prepare("SELECT name FROM services WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(service.trim());
+        }
+        if (!svcRow) return `Service "${service}" not found. Please check the service name.`;
+
+        // Case-insensitive branch lookup — exact first, then partial
+        let brRow = db.prepare('SELECT id, name FROM branches WHERE LOWER(name) = LOWER(?)').get(branch.trim());
+        if (!brRow) {
+            brRow = db.prepare("SELECT id, name FROM branches WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(branch.trim());
+        }
+        if (!brRow) return `Branch "${branch}" not found. Please check the branch name.`;
+
+        // Optional staff lookup
+        let staffId = null;
+        let staffNameSaved = null;
+        if (staff_name && staff_name.trim()) {
+            const staffRow = db.prepare(`
+                SELECT s.id, s.name FROM staff s
+                WHERE s.branch_id = ? AND LOWER(s.name) LIKE '%' || LOWER(?) || '%'
+                LIMIT 1
+            `).get(brRow.id, staff_name.trim());
+            if (staffRow) {
+                staffId = staffRow.id;
+                staffNameSaved = staffRow.name;
+            }
+        }
+
+        console.log('[BOOKING FIELDS] SAVING VOICE BOOKING:', JSON.stringify({
+            name: custName, phone, service: svcRow.name, branch: brRow.name,
+            date, time, staff: staffNameSaved || null,
+        }));
+
+        db.prepare(`
+            INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', 'voice', ?, ?)
+        `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, date.trim(), time.trim(), staffId, staffNameSaved);
+
+        let confirm = `Booking confirmed for ${custName} — ${svcRow.name} at ${brRow.name} on ${date} at ${time}`;
+        if (staffNameSaved) confirm += ` with ${staffNameSaved}`;
+        return confirm + '.';
+    }
+
+    return `Unknown tool: ${name}`;
+}
+
+// ── WebSocket call server ────────────────────────────────────────────────────
 
 function setupCallServer(server) {
     const wss = new WebSocketServer({ noServer: true });
 
-    // FIX: validate Origin header so only allowed domains can open voice calls
-    // (prevents external sites from consuming your Gemini quota)
+    // Validate Origin so only allowed domains can open voice calls
     server.on('upgrade', (req, socket, head) => {
         if (req.url !== '/api/call') return;
 
@@ -29,13 +146,10 @@ function setupCallServer(server) {
     wss.on('connection', async (ws) => {
         console.log('[call] Client connected');
 
-        // FIX: unique session ID per call so parallel callers don't share booking state.
-        // Previously all calls used the hardcoded string "__CALL_USER__".
+        // Unique session ID per call — parallel callers don't share state
         const callSessionId = `__CALL_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 
         const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-        // Reusable AudioContext equivalent: track session state for cleanup
         let sessionClosed = false;
 
         try {
@@ -51,53 +165,101 @@ function setupCallServer(server) {
                     systemInstruction: `
 You are a live voice receptionist for a beauty salon. You speak ONLY in pure Urdu or English — never Hindi.
 
-LANGUAGE RULES (strictly follow):
-- If the caller speaks English → respond fully in English.
-- If the caller speaks Urdu → respond in pure Urdu only.
-- NEVER use Hindi words. Forbidden examples: "shukria" (say "shukriya"), "aapka din shubh ho" (NEVER say this), "theek hai" use instead "bilkul" or "ji zaroor", "sundar" → "khubsoorat", "bahut accha" → "bohat acha". When in doubt, use simple Urdu or English — do not mix Hindi.
-- Do not say "aapka din shudh/shubh ho" or any Hindi blessings.
+LANGUAGE RULES:
+- Caller speaks English → respond fully in English.
+- Caller speaks Urdu → respond in pure Urdu only.
+- NEVER use Hindi words. Use "shukriya" not "shukria", "bohat acha" not "bahut accha", "khubsoorat" not "sundar".
+- Do not say "aapka din shubh ho" or any Hindi blessings.
 
 GREETING:
 - When the caller's first message is "__GREET__", greet warmly without calling any tool.
   English: "Hello! Welcome to our salon. How can I help you today?"
   Urdu: "Assalamu Alaikum! Salon mein khush aamdeed. Main aap ki kya khidmat kar sakti hoon?"
 
-BOOKING (when user wants to book):
-- Collect: name, phone number, service, branch, date, and time — one at a time, conversationally.
-- For branch: tell the caller the branch names (not numbers) and ask which they prefer.
-- For date: accept natural speech like "kal", "parson", "aaj", or "tomorrow".
-- For time: accept natural speech like "2 baje", "3 pm", "do baje".
-- When passing to salon_intent, extract ONLY the value — not the full sentence. Examples:
-  • Caller says "mera naam Ahmad hai" → pass "Ahmad"
-  • Caller says "my name is Sara" → pass "Sara"
-  • Caller says "mera number 03001234567 hai" → pass "03001234567"
-  • Caller says "kal ana chahta hoon" → pass "kal"
-  • Caller says "2 baje theek hai" → pass "2 baje"
-  • Caller says "Gulberg branch chahiye" → pass "Gulberg"
-  • If the caller gives a clean value already (e.g. just "Ahmad" or "3pm"), pass it as-is.
+BOOKING (when caller wants to book an appointment):
+1. Immediately call get_services AND get_branches so you know what is available.
+2. Collect these required fields — use values the caller already mentioned, ask only for missing ones:
+   • name    — caller's name (e.g. "Alyan")
+   • phone   — digits only, no spaces (e.g. "03001234567")
+   • service — must exactly match a name returned by get_services
+   • branch  — must exactly match a name returned by get_branches
+   • date    — natural date is fine (e.g. "kal", "tomorrow", "30 March")
+   • time    — convert to HH:MM 24-hour format before saving (e.g. "2 baje" → "14:00", "3 pm" → "15:00")
+3. Once the branch is confirmed, call get_staff with that branch name.
+   - If the result is "NO_STAFF": skip staff, continue to date/time.
+   - If staff are listed: ask the caller "Would you like to book with a specific stylist, or no preference?" and read the names.
+     • If they pick someone: include that name as staff_name in create_booking.
+     • If they say no preference / skip: proceed without staff_name.
+4. Call get_timings to verify the requested time is within salon hours. Warn the caller if it is not.
+5. Once all fields are collected, read them back to the caller and ask for confirmation.
+6. After confirmation, call create_booking.
+
+PRICES / SERVICES / BRANCHES / DEALS:
+- For any question about prices or services: call get_services.
+- For any question about locations or branches: call get_branches.
 
 GENERAL:
-- For prices, deals, services, branches → ALWAYS call salon_intent tool. Never answer from memory.
-- Keep responses short and natural for a phone call. No bullet points or markdown.
-- If unsure, ask one clarifying question.
+- Keep responses short and natural — this is a phone call, not a chat.
+- No bullet points, no markdown.
+- If unsure about one thing, ask one short question.
 `,
 
                     tools: [
                         {
                             functionDeclarations: [
                                 {
-                                    name: 'salon_intent',
-                                    description:
-                                        'Process any salon-related request: prices, deals, branches, booking. Always call this with the caller\'s transcribed message.',
+                                    name: 'get_services',
+                                    description: 'Get all available salon services and their prices.',
+                                    parameters: { type: 'object', properties: {} },
+                                },
+                                {
+                                    name: 'get_branches',
+                                    description: 'Get all salon branch names and locations.',
+                                    parameters: { type: 'object', properties: {} },
+                                },
+                                {
+                                    name: 'get_staff',
+                                    description: 'Get staff members available at a specific branch. Returns "NO_STAFF" if the branch has no staff.',
                                     parameters: {
                                         type: 'object',
                                         properties: {
-                                            text: {
+                                            branch: {
                                                 type: 'string',
-                                                description: 'The caller\'s message text',
+                                                description: 'Branch name, e.g. "Gulberg"',
                                             },
                                         },
-                                        required: ['text'],
+                                        required: ['branch'],
+                                    },
+                                },
+                                {
+                                    name: 'get_timings',
+                                    description: 'Get salon opening and closing hours for a given date.',
+                                    parameters: {
+                                        type: 'object',
+                                        properties: {
+                                            date: {
+                                                type: 'string',
+                                                description: 'Date string, e.g. "kal", "tomorrow", "today", "30 March", "2026-04-01"',
+                                            },
+                                        },
+                                        required: ['date'],
+                                    },
+                                },
+                                {
+                                    name: 'create_booking',
+                                    description: 'Save the appointment to the database. Only call this after the caller has confirmed all details.',
+                                    parameters: {
+                                        type: 'object',
+                                        properties: {
+                                            name:       { type: 'string', description: 'Customer full name' },
+                                            phone:      { type: 'string', description: 'Phone number, digits only, e.g. "03001234567"' },
+                                            service:    { type: 'string', description: 'Exact service name from get_services' },
+                                            branch:     { type: 'string', description: 'Exact branch name from get_branches' },
+                                            date:       { type: 'string', description: 'Appointment date, e.g. "kal", "30 March", "2026-04-01"' },
+                                            time:       { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
+                                            staff_name: { type: 'string', description: 'Staff member name from get_staff. Omit if caller has no preference.' },
+                                        },
+                                        required: ['name', 'phone', 'service', 'branch', 'date', 'time'],
                                     },
                                 },
                             ],
@@ -135,29 +297,20 @@ GENERAL:
                         // Tool call handling
                         if (message.toolCall) {
                             (async () => {
+                                const responses = [];
                                 for (const call of message.toolCall.functionCalls) {
-                                    if (call.name === 'salon_intent') {
-                                        let result;
-                                        try {
-                                            // FIX: use unique callSessionId so parallel calls are isolated
-                                            result = await routeMessage(callSessionId, call.args.text, 'voice');
-                                        } catch (err) {
-                                            console.error('[call] routeMessage error:', err.message);
-                                            result = "Sorry, I couldn't process that. Please try again.";
-                                        }
-
-                                        // FIX: session.sendToolResponse is the correct method name in @google/genai v1+
-                                        session.sendToolResponse({
-                                            functionResponses: [
-                                                {
-                                                    name: call.name,
-                                                    id: call.id,
-                                                    response: { result },
-                                                },
-                                            ],
-                                        });
+                                    console.log('[TOOL CALL RAW PAYLOAD]', JSON.stringify({ name: call.name, args: call.args }));
+                                    let result;
+                                    try {
+                                        result = await handleVoiceTool(call.name, call.args || {});
+                                    } catch (err) {
+                                        console.error('[call] tool error:', err.message);
+                                        result = `Error: ${err.message}`;
                                     }
+                                    console.log('[TOOL CALL RESULT]', call.name, '→', JSON.stringify(result));
+                                    responses.push({ name: call.name, id: call.id, response: { result } });
                                 }
+                                session.sendToolResponse({ functionResponses: responses });
                             })();
                         }
                     },
@@ -174,8 +327,6 @@ GENERAL:
             });
 
             // Browser messages: binary = PCM16 mic audio; text JSON = control messages
-            // NOTE: must use { audio: { data, mimeType } } — NOT { media: { ... } }
-            // Using 'media' silently sends nothing; the correct key is 'audio'.
             ws.on('message', (data) => {
                 if (sessionClosed) return;
 
@@ -184,7 +335,6 @@ GENERAL:
                     try {
                         const msg = JSON.parse(data.toString());
                         if (msg.type === 'greet') {
-                            // Trigger the agent to greet the caller first
                             console.log('[call] Sending greeting trigger to Gemini');
                             session.sendClientContent({
                                 turns: [{
@@ -198,7 +348,7 @@ GENERAL:
                     return;
                 }
 
-                // Binary = raw PCM16 mic audio
+                // Binary = raw PCM16 mic audio at 16kHz (downsampled by AudioWorklet in browser)
                 try {
                     session.sendRealtimeInput({
                         audio: {
