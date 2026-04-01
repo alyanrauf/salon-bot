@@ -78,10 +78,24 @@
   var opened = false;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  // Escape HTML then convert *bold* → <b>bold</b> for bot messages
+  function renderText(text) {
+    var escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return escaped.replace(/\*([^*\n]+)\*/g, '<b>$1</b>');
+  }
+
   function appendMsg(text, role) {
     var div = document.createElement('div');
     div.className = 'sb-msg ' + (role === 'bot' ? 'sb-bot' : 'sb-user');
-    div.textContent = text;
+    if (role === 'bot') {
+      div.innerHTML = renderText(text);
+    } else {
+      div.textContent = text;
+    }
     messages.appendChild(div);
     messages.scrollTop = messages.scrollHeight;
     return div;
