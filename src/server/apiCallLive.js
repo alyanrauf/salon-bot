@@ -1,70 +1,15 @@
 const { WebSocketServer } = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
 const { getDb } = require('../db/database');
+const { buildSalonContext } = require('../data/salonCache');
 
 // ── Voice tool implementations ──────────────────────────────────────────────
-
-function isWeekendForDate(dateStr) {
-    const t = (dateStr || '').trim().toLowerCase();
-    let d;
-    if (t === 'today' || t === 'aaj') {
-        d = new Date();
-    } else if (t === 'tomorrow' || t === 'kal') {
-        d = new Date();
-        d.setDate(d.getDate() + 1);
-    } else if (t === 'parson' || t === 'day after tomorrow') {
-        d = new Date();
-        d.setDate(d.getDate() + 2);
-    } else {
-        d = new Date(dateStr);
-        if (isNaN(d.getTime())) d = new Date(dateStr + ' ' + new Date().getFullYear());
-    }
-    if (isNaN(d.getTime())) return false;
-    return d.getDay() === 0 || d.getDay() === 6;
-}
+// Only create_booking remains — all read-only data is embedded in the system
+// instruction at session start, eliminating tool-call round-trip latency.
 
 async function handleVoiceTool(name, args) {
-    const db = getDb();
-
-    if (name === 'get_services') {
-        const rows = db.prepare('SELECT name, price FROM services ORDER BY name').all();
-        if (!rows.length) return 'No services available right now.';
-        return rows.map(r => `${r.name}: ${r.price}`).join(', ');
-    }
-
-    if (name === 'get_branches') {
-        const rows = db.prepare('SELECT name, address, phone FROM branches ORDER BY name').all();
-        if (!rows.length) return 'No branches available right now.';
-        return rows.map(r => [r.name, r.address, r.phone].filter(Boolean).join(' — ')).join(' | ');
-    }
-
-    if (name === 'get_timings') {
-        const dayType = isWeekendForDate(args.date || 'today') ? 'weekend' : 'workday';
-        const row = db.prepare('SELECT open_time, close_time FROM salon_timings WHERE day_type = ?').get(dayType);
-        if (!row) return 'Timing info not configured.';
-        return `Salon is open ${row.open_time} to ${row.close_time} on ${dayType}s.`;
-    }
-
-    if (name === 'get_staff') {
-        const branchName = (args.branch || '').trim();
-        let brRow = db.prepare('SELECT id, name FROM branches WHERE LOWER(name) = LOWER(?)').get(branchName);
-        if (!brRow) brRow = db.prepare("SELECT id, name FROM branches WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(branchName);
-        if (!brRow) return 'Branch not found.';
-
-        const staff = db.prepare(`
-            SELECT s.id, s.name, r.name as role
-            FROM staff s
-            LEFT JOIN staff_roles r ON s.role_id = r.id
-            WHERE s.branch_id = ?
-              AND (r.name IS NULL OR LOWER(r.name) NOT IN ('admin', 'receptionist', 'manager'))
-            ORDER BY s.name
-        `).all(brRow.id);
-
-        if (!staff.length) return 'NO_STAFF';
-        return staff.map(s => `${s.name} (${s.role || 'Stylist'})`).join(', ');
-    }
-
     if (name === 'create_booking') {
+        const db = getDb();
         const { name: custName, phone, service, branch, date, time, staff_name } = args;
 
         if (!custName || !phone || !service || !branch || !date || !time) {
@@ -146,11 +91,13 @@ function setupCallServer(server) {
     wss.on('connection', async (ws) => {
         console.log('[call] Client connected');
 
-        // Unique session ID per call — parallel callers don't share state
         const callSessionId = `__CALL_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 
         const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
         let sessionClosed = false;
+
+        // Load all salon data fresh from cache for this session
+        const salonContext = buildSalonContext();
 
         try {
             const session = await client.live.connect({
@@ -162,8 +109,11 @@ function setupCallServer(server) {
                         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
                     },
 
-                    systemInstruction: `
+                    systemInstruction: `${salonContext}
+
 You are a live voice receptionist for a beauty salon. You speak ONLY in pure Urdu or English — never Hindi.
+
+IMPORTANT: Do not narrate your reasoning or describe what tools you are calling. Never say things like "I will now look up the services" or "Let me check the branches." Respond naturally and directly, as if you already know everything.
 
 LANGUAGE RULES:
 - Caller speaks English → respond fully in English.
@@ -172,31 +122,30 @@ LANGUAGE RULES:
 - Do not say "aapka din shubh ho" or any Hindi blessings.
 
 GREETING:
-- When the caller's first message is "__GREET__", greet warmly without calling any tool.
+- When the caller's first message is "__GREET__", greet warmly.
   English: "Hello! Welcome to our salon. How can I help you today?"
   Urdu: "Assalamu Alaikum! Salon mein khush aamdeed. Main aap ki kya khidmat kar sakti hoon?"
 
 BOOKING (when caller wants to book an appointment):
-1. Immediately call get_services AND get_branches so you know what is available.
+1. You already have the full service list, branch list, staff list, and timings above — use them directly.
 2. Collect these required fields — use values the caller already mentioned, ask only for missing ones:
-   • name    — caller's name (e.g. "Alyan")
+   • name    — caller's name
    • phone   — digits only, no spaces (e.g. "03001234567")
-   • service — must exactly match a name returned by get_services
-   • branch  — must exactly match a name returned by get_branches
+   • service — must exactly match a name from the SERVICES list above
+   • branch  — must exactly match a name from the BRANCHES list above
    • date    — natural date is fine (e.g. "kal", "tomorrow", "30 March")
    • time    — convert to HH:MM 24-hour format before saving (e.g. "2 baje" → "14:00", "3 pm" → "15:00")
-3. Once the branch is confirmed, call get_staff with that branch name.
-   - If the result is "NO_STAFF": skip staff, continue to date/time.
-   - If staff are listed: ask the caller "Would you like to book with a specific stylist, or no preference?" and read the names.
+3. Once the branch is known, check the STAFF list above for that branch.
+   - If no staff listed for that branch: skip staff, continue to date/time.
+   - If staff are listed: ask "Would you like to book with a specific stylist, or no preference?" and read the names.
      • If they pick someone: include that name as staff_name in create_booking.
      • If they say no preference / skip: proceed without staff_name.
-4. Call get_timings to verify the requested time is within salon hours. Warn the caller if it is not.
+4. Check OPENING HOURS above to verify the requested time is within salon hours. Warn the caller if it is not.
 5. Once all fields are collected, read them back to the caller and ask for confirmation.
 6. After confirmation, call create_booking.
 
-PRICES / SERVICES / BRANCHES / DEALS:
-- For any question about prices or services: call get_services.
-- For any question about locations or branches: call get_branches.
+PRICES / SERVICES / BRANCHES:
+- All this information is already in your context above. Answer directly without calling any tool.
 
 GENERAL:
 - Keep responses short and natural — this is a phone call, not a chat.
@@ -208,44 +157,6 @@ GENERAL:
                         {
                             functionDeclarations: [
                                 {
-                                    name: 'get_services',
-                                    description: 'Get all available salon services and their prices.',
-                                    parameters: { type: 'object', properties: {} },
-                                },
-                                {
-                                    name: 'get_branches',
-                                    description: 'Get all salon branch names and locations.',
-                                    parameters: { type: 'object', properties: {} },
-                                },
-                                {
-                                    name: 'get_staff',
-                                    description: 'Get staff members available at a specific branch. Returns "NO_STAFF" if the branch has no staff.',
-                                    parameters: {
-                                        type: 'object',
-                                        properties: {
-                                            branch: {
-                                                type: 'string',
-                                                description: 'Branch name, e.g. "Gulberg"',
-                                            },
-                                        },
-                                        required: ['branch'],
-                                    },
-                                },
-                                {
-                                    name: 'get_timings',
-                                    description: 'Get salon opening and closing hours for a given date.',
-                                    parameters: {
-                                        type: 'object',
-                                        properties: {
-                                            date: {
-                                                type: 'string',
-                                                description: 'Date string, e.g. "kal", "tomorrow", "today", "30 March", "2026-04-01"',
-                                            },
-                                        },
-                                        required: ['date'],
-                                    },
-                                },
-                                {
                                     name: 'create_booking',
                                     description: 'Save the appointment to the database. Only call this after the caller has confirmed all details.',
                                     parameters: {
@@ -253,11 +164,11 @@ GENERAL:
                                         properties: {
                                             name: { type: 'string', description: 'Customer full name' },
                                             phone: { type: 'string', description: 'Phone number, digits only, e.g. "03001234567"' },
-                                            service: { type: 'string', description: 'Exact service name from get_services' },
-                                            branch: { type: 'string', description: 'Exact branch name from get_branches' },
+                                            service: { type: 'string', description: 'Exact service name from the salon data' },
+                                            branch: { type: 'string', description: 'Exact branch name from the salon data' },
                                             date: { type: 'string', description: 'Appointment date, e.g. "kal", "30 March", "2026-04-01"' },
                                             time: { type: 'string', description: 'Appointment time in HH:MM 24-hour format, e.g. "14:00"' },
-                                            staff_name: { type: 'string', description: 'Staff member name from get_staff. Omit if caller has no preference.' },
+                                            staff_name: { type: 'string', description: 'Staff member name. Omit if caller has no preference.' },
                                         },
                                         required: ['name', 'phone', 'service', 'branch', 'date', 'time'],
                                     },
@@ -294,7 +205,7 @@ GENERAL:
                             console.log('[call] Gemini interrupted (barge-in)');
                         }
 
-                        // Tool call handling
+                        // Tool call handling — only create_booking
                         if (message.toolCall) {
                             (async () => {
                                 const responses = [];

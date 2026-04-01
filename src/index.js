@@ -4,6 +4,7 @@ const path = require('path');
 const logger = require('./utils/logger');
 const { getDb, invalidateSettingsCache } = require('./db/database');
 const { setupCallServer } = require("./server/apiCallLive.js");
+const { refreshCache } = require('./data/salonCache');
 
 // Platform handlers
 const { handleWhatsApp, verifyWhatsApp } = require('./handlers/whatsapp');
@@ -176,6 +177,7 @@ app.post('/admin/deals', requireAdminAuth, (req, res) => {
       }
     });
     runAll();
+    refreshCache();
 
     const updated = db.prepare('SELECT * FROM deals ORDER BY id').all();
     res.json({ ok: true, deals: updated });
@@ -224,6 +226,7 @@ app.post('/admin/services', requireAdminAuth, (req, res) => {
       }
     });
     runAll();
+    refreshCache();
 
     const updated = db.prepare('SELECT * FROM services ORDER BY branch, name').all();
     res.json({ ok: true, services: updated });
@@ -387,6 +390,7 @@ app.post('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
   const r = db.prepare(
     `INSERT INTO branches (number, name, address, map_link, phone) VALUES (?, ?, ?, ?, ?)`
   ).run(maxNum + 1, name.trim(), address.trim(), map_link.trim(), phone.trim());
+  refreshCache();
   res.json(db.prepare('SELECT * FROM branches WHERE id = ?').get(r.lastInsertRowid));
 });
 
@@ -402,11 +406,13 @@ app.put('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
   getDb().prepare(
     `UPDATE branches SET name=?, address=?, map_link=?, phone=?, updated_at=datetime('now') WHERE id=?`
   ).run(name.trim(), address.trim(), map_link.trim(), phone.trim(), req.params.id);
+  refreshCache();
   res.json({ ok: true });
 });
 
 app.delete('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
   getDb().prepare('DELETE FROM branches WHERE id=?').run(req.params.id);
+  refreshCache();
   res.json({ ok: true });
 });
 
@@ -435,6 +441,7 @@ app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
   const r = db.prepare(
     `INSERT INTO staff (name, phone, role, branch_id, status) VALUES (?, ?, ?, ?, ?)`
   ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active');
+  refreshCache();
   res.json(db.prepare('SELECT * FROM staff WHERE id = ?').get(r.lastInsertRowid));
 });
 
@@ -451,11 +458,13 @@ app.put('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
   getDb().prepare(
     `UPDATE staff SET name=?, phone=?, role=?, branch_id=?, status=?, updated_at=datetime('now') WHERE id=?`
   ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active', req.params.id);
+  refreshCache();
   res.json({ ok: true });
 });
 
 app.delete('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
   getDb().prepare('DELETE FROM staff WHERE id=?').run(req.params.id);
+  refreshCache();
   res.json({ ok: true });
 });
 
@@ -495,6 +504,7 @@ app.put('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
     upsert.run('workday', workday.open_time, workday.close_time);
     upsert.run('weekend', weekend.open_time, weekend.close_time);
   })();
+  refreshCache();
   res.json({ ok: true });
 });
 
@@ -572,4 +582,5 @@ setupCallServer(server);
 server.listen(PORT, () => {
   logger.info(`Salon Bot server running on port ${PORT}`);
   getDb();
+  refreshCache();
 });
