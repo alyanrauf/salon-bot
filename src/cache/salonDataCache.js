@@ -43,6 +43,7 @@ function _buildEmpty() {
     staff:        [],
     salonTimings: {},
     staffRoles:   [],
+    appSettings:  {},
   };
 }
 
@@ -71,6 +72,10 @@ function _buildFromDb() {
   timings.forEach(t => { cache.salonTimings[t.day_type] = t; });
 
   cache.staffRoles = db.prepare('SELECT * FROM staff_roles ORDER BY name').all();
+
+  const settingRows = db.prepare('SELECT key, value FROM app_settings').all();
+  cache.appSettings = {};
+  settingRows.forEach(r => { cache.appSettings[r.key] = r.value; });
 
   const now = new Date().toISOString();
   cache.meta.generatedAt = now;
@@ -140,7 +145,7 @@ function getCache() {
  * Apply an incremental CRUD patch to the in-memory cache and flush to disk.
  *
  * @param {string} entityType  'deals' | 'services' | 'bookings' | 'branches' |
- *                             'staff' | 'salonTimings' | 'staffRoles'
+ *                             'staff' | 'salonTimings' | 'staffRoles' | 'appSettings'
  * @param {'upsert'|'delete'|'replace'} op
  * @param {object|Array} payload
  *   - replace : the complete new array / object for this entity
@@ -162,6 +167,11 @@ async function patchCache(entityType, op, payload) {
         } else if (payload && typeof payload === 'object') {
           Object.assign(_cache.salonTimings, payload);
         }
+      } else if (entityType === 'appSettings') {
+        // payload is a key-value map, e.g. { currency: 'Rs.' }
+        if (payload && typeof payload === 'object') {
+          Object.assign(_cache.appSettings, payload);
+        }
       } else {
         const arr = _cache[entityType];
         if (!Array.isArray(arr)) return;
@@ -178,6 +188,10 @@ async function patchCache(entityType, op, payload) {
       if (entityType === 'salonTimings') {
         if (payload && payload.day_type) {
           delete _cache.salonTimings[payload.day_type];
+        }
+      } else if (entityType === 'appSettings') {
+        if (payload && payload.key) {
+          delete _cache.appSettings[payload.key];
         }
       } else {
         const arr = _cache[entityType];

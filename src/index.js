@@ -574,6 +574,7 @@ app.put('/admin/api/settings/general', requireAdminAuth, (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(currency.trim());
   invalidateSettingsCache();
+  patchCache('appSettings', 'upsert', { currency: currency.trim() }).catch(e => logger.error('[cache] appSettings patch:', e.message));
   res.json({ ok: true });
 });
 
@@ -597,6 +598,27 @@ app.get("/run-seed", (req, res) => {
   try {
     delete require.cache[require.resolve("./db/seed.js")];
     require("./db/seed.js")();
+
+    // Seed does destructive DELETE+re-insert on deals, services, and conditionally
+    // staff/currency — refresh all affected slices in the cache.
+    const db = getDb();
+    const updatedDeals    = db.prepare('SELECT * FROM deals ORDER BY id').all();
+    const updatedServices = db.prepare('SELECT * FROM services ORDER BY branch, name').all();
+    const updatedStaff    = db.prepare(`
+      SELECT s.*, b.name AS branch_name FROM staff s
+      LEFT JOIN branches b ON s.branch_id = b.id ORDER BY s.name
+    `).all();
+    const settingRows     = db.prepare('SELECT key, value FROM app_settings').all();
+    const updatedSettings = {};
+    settingRows.forEach(r => { updatedSettings[r.key] = r.value; });
+
+    Promise.all([
+      patchCache('deals',       'replace', updatedDeals),
+      patchCache('services',    'replace', updatedServices),
+      patchCache('staff',       'replace', updatedStaff),
+      patchCache('appSettings', 'replace', updatedSettings),
+    ]).catch(e => logger.error('[cache] seed refresh:', e.message));
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).send(err.toString());
