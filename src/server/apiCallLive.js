@@ -5,6 +5,29 @@ const { getCache, patchCache } = require('../cache/salonDataCache');
 
 // ── Voice tool implementations ──────────────────────────────────────────────
 
+// Convert relative/natural date words to YYYY-MM-DD
+function normalizeDateToISO(dateStr) {
+    const t = (dateStr || '').trim().toLowerCase();
+    let d;
+    if (t === 'today' || t === 'aaj') {
+        d = new Date();
+    } else if (t === 'tomorrow' || t === 'kal') {
+        d = new Date();
+        d.setDate(d.getDate() + 1);
+    } else if (t === 'parson' || t === 'day after tomorrow') {
+        d = new Date();
+        d.setDate(d.getDate() + 2);
+    } else {
+        d = new Date(dateStr);
+        if (isNaN(d.getTime())) d = new Date(dateStr + ' ' + new Date().getFullYear());
+    }
+    if (isNaN(d.getTime())) return dateStr; // return original if unparseable
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 function isWeekendForDate(dateStr) {
     const t = (dateStr || '').trim().toLowerCase();
     let d;
@@ -86,21 +109,11 @@ async function handleVoiceTool(name, args) {
             return 'Missing required fields. Need: name, phone, service, branch, date, time.';
         }
 
-        // Reject past dates
-        const t = (date || '').trim().toLowerCase();
-        let bookingDate;
-        if (t === 'today' || t === 'aaj') {
-            bookingDate = new Date();
-        } else if (t === 'tomorrow' || t === 'kal') {
-            bookingDate = new Date();
-            bookingDate.setDate(bookingDate.getDate() + 1);
-        } else if (t === 'parson' || t === 'day after tomorrow') {
-            bookingDate = new Date();
-            bookingDate.setDate(bookingDate.getDate() + 2);
-        } else {
-            bookingDate = new Date(date);
-            if (isNaN(bookingDate.getTime())) bookingDate = new Date(date + ' ' + new Date().getFullYear());
-        }
+        // Normalize relative date words → YYYY-MM-DD
+        const normalizedDate = normalizeDateToISO(date);
+
+        // Reject past dates (normalizedDate is now YYYY-MM-DD)
+        const bookingDate = new Date(normalizedDate);
         if (!isNaN(bookingDate.getTime())) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
@@ -124,6 +137,19 @@ async function handleVoiceTool(name, args) {
         }
         if (!brRow) return `Branch "${branch}" not found. Please check the branch name.`;
 
+        // Validate time against salon hours
+        const dayType = isWeekendForDate(normalizedDate) ? 'weekend' : 'workday';
+        const timingRow = db.prepare('SELECT open_time, close_time FROM salon_timings WHERE day_type = ?').get(dayType);
+        if (timingRow && time) {
+            const toMins = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+            const requested = toMins(time.trim());
+            const open = toMins(timingRow.open_time);
+            const close = toMins(timingRow.close_time);
+            if (requested < open || requested > close) {
+                return `Sorry, we are closed at ${time}. Our ${dayType} hours are ${timingRow.open_time} to ${timingRow.close_time}. Please choose a different time.`;
+            }
+        }
+
         // Optional staff lookup
         let staffId = null;
         let staffNameSaved = null;
@@ -141,17 +167,17 @@ async function handleVoiceTool(name, args) {
 
         console.log('[BOOKING FIELDS] SAVING VOICE BOOKING:', JSON.stringify({
             name: custName, phone, service: svcRow.name, branch: brRow.name,
-            date, time, staff: staffNameSaved || null,
+            date: normalizedDate, time, staff: staffNameSaved || null,
         }));
 
         const insertResult = db.prepare(`
             INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
             VALUES (?, ?, ?, ?, ?, ?, 'confirmed', 'voice', ?, ?)
-        `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, date.trim(), time.trim(), staffId, staffNameSaved);
+        `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, normalizedDate, time.trim(), staffId, staffNameSaved);
         const newBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(insertResult.lastInsertRowid);
         if (newBooking) patchCache('bookings', 'upsert', newBooking).catch(err => console.error('[cache] voice booking patch:', err.message));
 
-        let confirm = `Booking confirmed for ${custName} — ${svcRow.name} at ${brRow.name} on ${date} at ${time}`;
+        let confirm = `Booking confirmed for ${custName} — ${svcRow.name} at ${brRow.name} on ${normalizedDate} at ${time}`;
         if (staffNameSaved) confirm += ` with ${staffNameSaved}`;
         return confirm + '.';
     }
@@ -226,9 +252,9 @@ BOOKING (when caller wants to book an appointment):
    • branch  — must exactly match a name returned by get_branches
    • date    — natural date is fine (e.g. "kal", "tomorrow", "30 March")
    • time    — convert to HH:MM 24-hour format before saving (e.g. "2 baje" → "14:00", "3 pm" → "15:00")
-3. Call get_timings to verify the requested time is within salon hours. Warn the caller if it is not.
-4. Once all fields are collected, read them back to the caller and ask for confirmation.
-5. After confirmation, call create_booking.
+3. Optionally call get_timings to verify the requested time is within salon hours. If outside hours, warn the caller and ask for another time. If within hours OR if you already know the time is reasonable, skip this step and move on immediately.
+4. Once ALL fields are collected, immediately read them back to the caller and ask: "Shall I confirm this booking?"
+5. As soon as the caller says yes/confirm/theek hai/okay, call create_booking right away — do not ask again.
 
 PRICES / SERVICES / BRANCHES / DEALS:
 - For any question about prices or services: call get_services.

@@ -221,6 +221,28 @@ function isWeekendDate(dateStr) {
   return day === 0 || day === 6;
 }
 
+function normalizeDateToISO(dateStr) {
+  const t = (dateStr || '').trim().toLowerCase();
+  let d;
+  if (t === 'today' || t === 'aaj') {
+    d = new Date();
+  } else if (t === 'tomorrow' || t === 'kal') {
+    d = new Date();
+    d.setDate(d.getDate() + 1);
+  } else if (t === 'parson' || t === 'day after tomorrow') {
+    d = new Date();
+    d.setDate(d.getDate() + 2);
+  } else {
+    d = new Date(dateStr);
+    if (isNaN(d.getTime())) d = new Date(dateStr + ' ' + new Date().getFullYear());
+  }
+  if (isNaN(d.getTime())) return dateStr;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function getSalonTiming(dateStr) {
   try {
     const db = getDb();
@@ -386,9 +408,10 @@ function handleBookingStep(userId, text, session, platform) {
         '_e.g. 30 March · April 5 · tomorrow · 2026-04-05_'
       );
     }
-    setSession(userId, { ...session, state: 'ASK_TIME', date: dateText });
+    const normalizedDate = normalizeDateToISO(dateText);
+    setSession(userId, { ...session, state: 'ASK_TIME', date: normalizedDate });
 
-    const timing = getSalonTiming(dateText);
+    const timing = getSalonTiming(normalizedDate);
     let timeHint = '_e.g. 2:00 PM · 11am · 3:30 PM · 14:00_';
     if (timing) {
       timeHint = `🕐 Available: *${formatTime12h(timing.open_time)} – ${formatTime12h(timing.close_time)}*\n\n${timeHint}`;
