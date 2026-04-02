@@ -4,6 +4,7 @@ const path = require('path');
 const logger = require('./utils/logger');
 const { getDb, invalidateSettingsCache } = require('./db/database');
 const { setupCallServer } = require("./server/apiCallLive.js");
+const { initCache, getCache, patchCache } = require('./cache/salonDataCache');
 
 // Platform handlers
 const { handleWhatsApp, verifyWhatsApp } = require('./handlers/whatsapp');
@@ -178,6 +179,7 @@ app.post('/admin/deals', requireAdminAuth, (req, res) => {
     runAll();
 
     const updated = db.prepare('SELECT * FROM deals ORDER BY id').all();
+    patchCache('deals', 'replace', updated).catch(e => logger.error('[cache] deals patch:', e.message));
     res.json({ ok: true, deals: updated });
   } catch (err) {
     logger.error('[admin] Save deals error:', err.message);
@@ -226,6 +228,7 @@ app.post('/admin/services', requireAdminAuth, (req, res) => {
     runAll();
 
     const updated = db.prepare('SELECT * FROM services ORDER BY branch, name').all();
+    patchCache('services', 'replace', updated).catch(e => logger.error('[cache] services patch:', e.message));
     res.json({ ok: true, services: updated });
   } catch (err) {
     logger.error('[admin] Save services error:', err.message);
@@ -321,7 +324,9 @@ app.post('/admin/api/bookings', requireAdminAuth, (req, res) => {
     INSERT INTO bookings (customer_name, phone, service, branch, date, time, notes, status, source, staff_id, staff_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)
   `).run(customer_name.trim(), phone.trim(), service.trim(), branch.trim(), date.trim(), time.trim(), notes || null, status.trim(), staff_id || null, staff_name || null);
-  res.json(db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid));
+  const newBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(r.lastInsertRowid);
+  patchCache('bookings', 'upsert', newBooking).catch(e => logger.error('[cache] bookings upsert:', e.message));
+  res.json(newBooking);
 });
 
 app.put('/admin/api/bookings/:id', requireAdminAuth, (req, res) => {
@@ -337,6 +342,8 @@ app.put('/admin/api/bookings/:id', requireAdminAuth, (req, res) => {
     UPDATE bookings SET customer_name=?, phone=?, service=?, branch=?, date=?, time=?, notes=?, status=?, staff_id=?, staff_name=?, updated_at=datetime('now')
     WHERE id=?
   `).run(customer_name.trim(), phone.trim(), service.trim(), branch.trim(), date.trim(), time.trim(), notes || null, status.trim(), staff_id || null, staff_name || null, req.params.id);
+  const updatedBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
+  if (updatedBooking) patchCache('bookings', 'upsert', updatedBooking).catch(e => logger.error('[cache] bookings put:', e.message));
   res.json({ ok: true });
 });
 
@@ -344,12 +351,15 @@ app.patch('/admin/api/bookings/:id/status', requireAdminAuth, (req, res) => {
   const db = getDb();
   db.prepare("UPDATE bookings SET status=?, updated_at=datetime('now') WHERE id=?")
     .run(req.body.status, req.params.id);
+  const updated = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
+  if (updated) patchCache('bookings', 'upsert', updated).catch(e => logger.error('[cache] bookings status patch:', e.message));
   res.json({ ok: true });
 });
 
 app.delete('/admin/api/bookings/:id', requireAdminAuth, (req, res) => {
   const db = getDb();
   db.prepare('DELETE FROM bookings WHERE id=?').run(req.params.id);
+  patchCache('bookings', 'delete', { id: req.params.id }).catch(e => logger.error('[cache] bookings delete:', e.message));
   res.json({ ok: true });
 });
 
@@ -387,7 +397,9 @@ app.post('/admin/api/settings/branches', requireAdminAuth, (req, res) => {
   const r = db.prepare(
     `INSERT INTO branches (number, name, address, map_link, phone) VALUES (?, ?, ?, ?, ?)`
   ).run(maxNum + 1, name.trim(), address.trim(), map_link.trim(), phone.trim());
-  res.json(db.prepare('SELECT * FROM branches WHERE id = ?').get(r.lastInsertRowid));
+  const newBranch = db.prepare('SELECT * FROM branches WHERE id = ?').get(r.lastInsertRowid);
+  patchCache('branches', 'upsert', newBranch).catch(e => logger.error('[cache] branches insert:', e.message));
+  res.json(newBranch);
 });
 
 app.put('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
@@ -399,14 +411,18 @@ app.put('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
   if (!phone?.trim()) errs.push('phone');
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
-  getDb().prepare(
+  const db = getDb();
+  db.prepare(
     `UPDATE branches SET name=?, address=?, map_link=?, phone=?, updated_at=datetime('now') WHERE id=?`
   ).run(name.trim(), address.trim(), map_link.trim(), phone.trim(), req.params.id);
+  const updatedBranch = db.prepare('SELECT * FROM branches WHERE id = ?').get(req.params.id);
+  if (updatedBranch) patchCache('branches', 'upsert', updatedBranch).catch(e => logger.error('[cache] branches update:', e.message));
   res.json({ ok: true });
 });
 
 app.delete('/admin/api/settings/branches/:id', requireAdminAuth, (req, res) => {
   getDb().prepare('DELETE FROM branches WHERE id=?').run(req.params.id);
+  patchCache('branches', 'delete', { id: req.params.id }).catch(e => logger.error('[cache] branches delete:', e.message));
   res.json({ ok: true });
 });
 
@@ -435,7 +451,12 @@ app.post('/admin/api/settings/staff', requireAdminAuth, (req, res) => {
   const r = db.prepare(
     `INSERT INTO staff (name, phone, role, branch_id, status) VALUES (?, ?, ?, ?, ?)`
   ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active');
-  res.json(db.prepare('SELECT * FROM staff WHERE id = ?').get(r.lastInsertRowid));
+  const newStaff = db.prepare(`
+    SELECT s.*, b.name AS branch_name FROM staff s
+    LEFT JOIN branches b ON s.branch_id = b.id WHERE s.id = ?
+  `).get(r.lastInsertRowid);
+  patchCache('staff', 'upsert', newStaff).catch(e => logger.error('[cache] staff insert:', e.message));
+  res.json(newStaff);
 });
 
 app.put('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
@@ -448,14 +469,21 @@ app.put('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
   if (!role || !validRoles.includes(role)) errs.push('role');
   if (errs.length) return res.status(400).json({ error: `Required fields missing or invalid: ${errs.join(', ')}` });
 
-  getDb().prepare(
+  const dbS = getDb();
+  dbS.prepare(
     `UPDATE staff SET name=?, phone=?, role=?, branch_id=?, status=?, updated_at=datetime('now') WHERE id=?`
   ).run(name.trim(), phone.trim(), role, branch_id || null, status || 'active', req.params.id);
+  const updatedStaff = dbS.prepare(`
+    SELECT s.*, b.name AS branch_name FROM staff s
+    LEFT JOIN branches b ON s.branch_id = b.id WHERE s.id = ?
+  `).get(req.params.id);
+  if (updatedStaff) patchCache('staff', 'upsert', updatedStaff).catch(e => logger.error('[cache] staff update:', e.message));
   res.json({ ok: true });
 });
 
 app.delete('/admin/api/settings/staff/:id', requireAdminAuth, (req, res) => {
   getDb().prepare('DELETE FROM staff WHERE id=?').run(req.params.id);
+  patchCache('staff', 'delete', { id: req.params.id }).catch(e => logger.error('[cache] staff delete:', e.message));
   res.json({ ok: true });
 });
 
@@ -495,6 +523,10 @@ app.put('/admin/api/settings/timings', requireAdminAuth, (req, res) => {
     upsert.run('workday', workday.open_time, workday.close_time);
     upsert.run('weekend', weekend.open_time, weekend.close_time);
   })();
+  const timings = db.prepare('SELECT * FROM salon_timings').all();
+  const timingsMap = {};
+  timings.forEach(t => { timingsMap[t.day_type] = t; });
+  patchCache('salonTimings', 'replace', timingsMap).catch(e => logger.error('[cache] timings update:', e.message));
   res.json({ ok: true });
 });
 
@@ -510,7 +542,9 @@ app.post('/admin/api/settings/roles', requireAdminAuth, (req, res) => {
   const normalized = name.trim().toLowerCase();
   try {
     const r = getDb().prepare(`INSERT INTO staff_roles (name) VALUES (?)`).run(normalized);
-    res.json(getDb().prepare('SELECT * FROM staff_roles WHERE id = ?').get(r.lastInsertRowid));
+    const newRole = getDb().prepare('SELECT * FROM staff_roles WHERE id = ?').get(r.lastInsertRowid);
+    patchCache('staffRoles', 'upsert', newRole).catch(e => logger.error('[cache] roles insert:', e.message));
+    res.json(newRole);
   } catch (err) {
     if (err.message.includes('UNIQUE')) return res.status(400).json({ error: 'Role already exists' });
     res.status(500).json({ error: err.message });
@@ -519,6 +553,7 @@ app.post('/admin/api/settings/roles', requireAdminAuth, (req, res) => {
 
 app.delete('/admin/api/settings/roles/:id', requireAdminAuth, (req, res) => {
   getDb().prepare('DELETE FROM staff_roles WHERE id = ?').run(req.params.id);
+  patchCache('staffRoles', 'delete', { id: req.params.id }).catch(e => logger.error('[cache] roles delete:', e.message));
   res.json({ ok: true });
 });
 
@@ -540,6 +575,20 @@ app.put('/admin/api/settings/general', requireAdminAuth, (req, res) => {
   `).run(currency.trim());
   invalidateSettingsCache();
   res.json({ ok: true });
+});
+
+// ─── Salon data cache endpoint ─────────────────────────────────────────────────
+app.get('/salon-data.json', (req, res) => {
+  const expectedKey = process.env.SALON_DATA_KEY || 'adminkey123';
+  if (!process.env.SALON_DATA_KEY) {
+    logger.warn('[cache] SALON_DATA_KEY not set in .env — using default dev key. Set it for production.');
+  }
+  if (!req.query.key || req.query.key !== expectedKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const cache = getCache();
+  if (!cache) return res.status(503).json({ error: 'Cache not ready' });
+  res.json(cache);
 });
 
 // ─── Seed db handling ───────────────────────────────────────────────────────────
@@ -569,7 +618,8 @@ const server = http.createServer(app);
 
 setupCallServer(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   logger.info(`Salon Bot server running on port ${PORT}`);
   getDb();
+  await initCache();
 });

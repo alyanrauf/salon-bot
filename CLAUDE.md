@@ -4,6 +4,55 @@
 
 ---
 
+## What Changed and Why (2026-04-02)
+
+### Persistent JSON Cache Layer
+
+Added `src/cache/salonDataCache.js` — a lightweight persistent cache that writes all salon operational data to `data/salon-data.json` so read-heavy voice-call tool handlers and future integrations never hit SQLite for stable reference data.
+
+**What is cached:**
+
+| Key | Content |
+| --- | ------- |
+| `deals` | All deals rows |
+| `services` | All services rows |
+| `bookings` | All booking rows |
+| `branches` | All branch rows |
+| `staff` | Staff rows with `branch_name` join |
+| `salonTimings` | `{ workday: {...}, weekend: {...} }` keyed by `day_type` |
+| `staffRoles` | All staff_role rows |
+
+**New files / changes:**
+
+| File | What changed |
+| ---- | ------------ |
+| `src/cache/salonDataCache.js` | New — cache module: `initCache`, `getCache`, `patchCache`, `saveAtomic` |
+| `src/index.js` | Imports cache; calls `initCache()` on server start; adds `GET /salon-data.json` endpoint; adds `patchCache()` fire-and-forget after every DB mutation (deals, services, bookings, branches, staff, timings, roles) |
+| `src/server/apiCallLive.js` | `handleVoiceTool` reads `get_services`, `get_branches`, `get_timings` from cache with DB fallback; patches cache after `create_booking` |
+| `data/salon-data.json` | Auto-created on first server start |
+
+**New API route:**
+
+- `GET /salon-data.json?key=<SALON_DATA_KEY>` — returns the full JSON cache. Protected by `SALON_DATA_KEY` env var (falls back to `adminkey123` dev key with a log warning if unset). Returns `401` for wrong/missing key, `503` if cache not yet warm.
+
+**Design decisions:**
+
+- **Atomic writes** — cache is written to `salon-data.json.tmp` then renamed, preventing partial-write corruption.
+- **Write mutex** — all saves are serialised through a promise chain (`_writeQueue`) so concurrent DB mutations never interleave disk writes.
+- **Incremental patching** — `patchCache(entity, 'upsert'|'delete'|'replace', payload)` updates only the affected slice; full DB rebuild only runs if the file is missing or corrupt on startup.
+- **Fire-and-forget** — cache patches are called with `.catch()` after the DB write succeeds; they never block the HTTP response.
+- **DB fallback** — voice tool handlers fall back to a direct DB query if the cache is not yet warm (cold-start race condition safety).
+
+**Configuration:**
+
+Add to `.env`:
+
+```env
+SALON_DATA_KEY=your-secure-key
+```
+
+---
+
 ## What Changed and Why (2026-03-30)
 
 ### Emoji Sizing Fix (widget.js + wp-plugin)

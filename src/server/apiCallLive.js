@@ -1,6 +1,7 @@
 const { WebSocketServer } = require('ws');
 const { GoogleGenAI, Modality } = require('@google/genai');
 const { getDb } = require('../db/database');
+const { getCache, patchCache } = require('../cache/salonDataCache');
 
 // ── Voice tool implementations ──────────────────────────────────────────────
 
@@ -25,29 +26,43 @@ function isWeekendForDate(dateStr) {
 
 async function handleVoiceTool(name, args) {
     const db = getDb();
+    const cache = getCache();
 
     if (name === 'get_services') {
-        const rows = db.prepare('SELECT name, price FROM services ORDER BY name').all();
+        const rows = (cache && cache.services && cache.services.length)
+            ? cache.services
+            : db.prepare('SELECT name, price FROM services ORDER BY name').all();
         if (!rows.length) return 'No services available right now.';
         return rows.map(r => `${r.name}: ${r.price}`).join(', ');
     }
 
     if (name === 'get_branches') {
-        const rows = db.prepare('SELECT name, address, phone FROM branches ORDER BY name').all();
+        const rows = (cache && cache.branches && cache.branches.length)
+            ? cache.branches
+            : db.prepare('SELECT name, address, phone FROM branches ORDER BY name').all();
         if (!rows.length) return 'No branches available right now.';
         return rows.map(r => [r.name, r.address, r.phone].filter(Boolean).join(' — ')).join(' | ');
     }
 
     if (name === 'get_timings') {
         const dayType = isWeekendForDate(args.date || 'today') ? 'weekend' : 'workday';
-        const row = db.prepare('SELECT open_time, close_time FROM salon_timings WHERE day_type = ?').get(dayType);
+        const row = (cache && cache.salonTimings && cache.salonTimings[dayType])
+            ? cache.salonTimings[dayType]
+            : db.prepare('SELECT open_time, close_time FROM salon_timings WHERE day_type = ?').get(dayType);
         if (!row) return 'Timing info not configured.';
         return `Salon is open ${row.open_time} to ${row.close_time} on ${dayType}s.`;
     }
 
     if (name === 'get_staff') {
         const branchName = (args.branch || '').trim();
-        let brRow = db.prepare('SELECT id, name FROM branches WHERE LOWER(name) = LOWER(?)').get(branchName);
+        // Prefer cache for branch lookup
+        let brRow = null;
+        if (cache && cache.branches && cache.branches.length) {
+            const bn = branchName.toLowerCase();
+            brRow = cache.branches.find(b => b.name.toLowerCase() === bn)
+                 || cache.branches.find(b => b.name.toLowerCase().includes(bn));
+        }
+        if (!brRow) brRow = db.prepare('SELECT id, name FROM branches WHERE LOWER(name) = LOWER(?)').get(branchName);
         if (!brRow) brRow = db.prepare("SELECT id, name FROM branches WHERE LOWER(name) LIKE '%' || LOWER(?) || '%'").get(branchName);
         if (!brRow) return 'Branch not found.';
 
@@ -105,10 +120,12 @@ async function handleVoiceTool(name, args) {
             date, time, staff: staffNameSaved || null,
         }));
 
-        db.prepare(`
+        const insertResult = db.prepare(`
             INSERT INTO bookings (customer_name, phone, service, branch, date, time, status, source, staff_id, staff_name)
             VALUES (?, ?, ?, ?, ?, ?, 'confirmed', 'voice', ?, ?)
         `).run(custName.trim(), phone.trim(), svcRow.name, brRow.name, date.trim(), time.trim(), staffId, staffNameSaved);
+        const newBooking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(insertResult.lastInsertRowid);
+        if (newBooking) patchCache('bookings', 'upsert', newBooking).catch(err => console.error('[cache] voice booking patch:', err.message));
 
         let confirm = `Booking confirmed for ${custName} — ${svcRow.name} at ${brRow.name} on ${date} at ${time}`;
         if (staffNameSaved) confirm += ` with ${staffNameSaved}`;
