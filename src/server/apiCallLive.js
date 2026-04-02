@@ -309,6 +309,7 @@ GENERAL:
 
                         if (message.serverContent?.interrupted) {
                             console.log('[call] Gemini interrupted (barge-in)');
+                            ws.send(JSON.stringify({ type: 'interrupted' }));
                         }
 
                         // Tool call handling
