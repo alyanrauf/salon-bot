@@ -86,6 +86,30 @@ async function handleVoiceTool(name, args) {
             return 'Missing required fields. Need: name, phone, service, branch, date, time.';
         }
 
+        // Reject past dates
+        const t = (date || '').trim().toLowerCase();
+        let bookingDate;
+        if (t === 'today' || t === 'aaj') {
+            bookingDate = new Date();
+        } else if (t === 'tomorrow' || t === 'kal') {
+            bookingDate = new Date();
+            bookingDate.setDate(bookingDate.getDate() + 1);
+        } else if (t === 'parson' || t === 'day after tomorrow') {
+            bookingDate = new Date();
+            bookingDate.setDate(bookingDate.getDate() + 2);
+        } else {
+            bookingDate = new Date(date);
+            if (isNaN(bookingDate.getTime())) bookingDate = new Date(date + ' ' + new Date().getFullYear());
+        }
+        if (!isNaN(bookingDate.getTime())) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            bookingDate.setHours(0, 0, 0, 0);
+            if (bookingDate < today) {
+                return `Sorry, ${date} has already passed. Please choose today or a future date.`;
+            }
+        }
+
         // Case-insensitive service lookup — exact first, then partial
         let svcRow = db.prepare('SELECT name FROM services WHERE LOWER(name) = LOWER(?)').get(service.trim());
         if (!svcRow) {
@@ -202,14 +226,9 @@ BOOKING (when caller wants to book an appointment):
    • branch  — must exactly match a name returned by get_branches
    • date    — natural date is fine (e.g. "kal", "tomorrow", "30 March")
    • time    — convert to HH:MM 24-hour format before saving (e.g. "2 baje" → "14:00", "3 pm" → "15:00")
-3. Once the branch is confirmed, call get_staff with that branch name.
-   - If the result is "NO_STAFF": skip staff, continue to date/time.
-   - If staff are listed: ask the caller "Would you like to book with a specific stylist, or no preference?" and read the names.
-     • If they pick someone: include that name as staff_name in create_booking.
-     • If they say no preference / skip: proceed without staff_name.
-4. Call get_timings to verify the requested time is within salon hours. Warn the caller if it is not.
-5. Once all fields are collected, read them back to the caller and ask for confirmation.
-6. After confirmation, call create_booking.
+3. Call get_timings to verify the requested time is within salon hours. Warn the caller if it is not.
+4. Once all fields are collected, read them back to the caller and ask for confirmation.
+5. After confirmation, call create_booking.
 
 PRICES / SERVICES / BRANCHES / DEALS:
 - For any question about prices or services: call get_services.
