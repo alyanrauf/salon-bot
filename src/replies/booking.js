@@ -475,7 +475,7 @@ function handleBookingStep(userId, text, session, platform) {
       service: session.service,
       branch: session.branch,
       date: session.date,
-      time: timeText,
+      time: time24,
       staffId: session.staffId || null,
       staffName: session.staffName || null,
     };
